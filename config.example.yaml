@@ -1,0 +1,67 @@
+# ASA_Login 設定ファイル
+
+display:
+  monitor_index: 1
+
+retry:
+  max_attempts: 0
+  delay_seconds: 3.0
+  poll_interval: 0.5        # UI 検出の間隔（短いほど表示後すぐ反応）
+  transition_settle: 0.4    # ボタン検出後、クリック前の安定待ち（秒）
+  after_click_delay: 2.0     # クリック後の画面遷移待ち（秒）
+  transition_timeout: 20.0   # 次の UI が出るまでの最大待機（秒）
+  join_click_delay: 1.5      # 後方互換（after_click_delay 優先）
+  check_interval: 0.5        # 後方互換（poll_interval 優先）
+  result_timeout: 120.0        # ③ ログイン試行の待機（秒）
+  login_movie_timeout: 120.0   # ムービー検出後の成功/失敗判定待ち（秒）
+  mods_wait_seconds: 8.0
+  recovery_timeout: 45.0
+  stuck_server_list_seconds: 30.0
+  start_countdown_seconds: 3
+
+matching:
+  threshold: 0.8
+  screen_threshold: 0.75
+  button_threshold: 0.75
+  click_mode: image  # image=画像優先(見つかったら必ず画像クリック) | image_only=画像のみ | coordinates=座標優先
+
+# 画面全体キャプチャ（① はセットアップで登録。他は同梱デフォルトで補完）
+templates:
+  server_list: templates/server_list.png
+  required_mods: templates/required_mods.png
+  connection_failed: templates/connection_failed.png
+  login_movie: templates/login_movie.png
+  network_failure: templates/network_failure.png
+  title_screen: templates/title_screen.png
+  server_list_empty: templates/server_list_empty.png
+  main_menu: templates/main_menu.png
+  in_game: templates/in_game.png
+
+# 座標フォールバック（ボタン画像は assets/defaults/buttons の同梱サンプルを使用）
+ui:
+  join_server_list:
+    x_percent: 92.0
+    y_percent: 92.0
+  join_mods:
+    x_percent: 42.0
+    y_percent: 92.0
+  cancel_failed:
+    x_percent: 55.0
+    y_percent: 55.0
+  accept_network_failure:
+    x_percent: 50.0
+    y_percent: 60.0
+  back_empty_list:
+    x_percent: 5.0
+    y_percent: 92.0
+  join_game:
+    x_percent: 50.0
+    y_percent: 50.0
+
+window:
+  title_contains: "ARK: Survival Ascended"
+  bring_to_front: true
+
+logging:
+  level: INFO
+  file: logs/asa_login.log
