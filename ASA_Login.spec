@@ -24,9 +24,6 @@ hiddenimports = [
     "PIL.ImageTk",
     "yaml",
     "pydirectinput",
-    "vgamepad",
-    "vgamepad.win",
-    "vgamepad.win.virtual_gamepad",
     "win32gui",
     "win32con",
     "win32api",
@@ -34,7 +31,7 @@ hiddenimports = [
     "pywintypes",
 ]
 
-for package in ("cv2", "mss", "vgamepad"):
+for package in ("cv2", "mss"):
     pkg_datas, pkg_binaries, pkg_hidden = collect_all(package)
     datas += pkg_datas
     binaries += pkg_binaries

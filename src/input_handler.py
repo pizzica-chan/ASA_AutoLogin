@@ -15,8 +15,6 @@ logger = logging.getLogger(__name__)
 pydirectinput.PAUSE = 0.05
 pydirectinput.FAILSAFE = True
 
-_vx360_gamepad = None
-
 
 def human_delay(min_sec: float = 0.1, max_sec: float = 0.3) -> None:
     time.sleep(random.uniform(min_sec, max_sec))
@@ -35,32 +33,6 @@ def press_key(key: str) -> None:
     human_delay(0.05, 0.1)
     pydirectinput.press(key)
     logger.debug("キー押下: %s", key)
-
-
-def press_gamepad_x() -> bool:
-    """ゲームパッドの X ボタン（Xbox レイアウト）を送信。ViGEmBus + vgamepad が必要"""
-    global _vx360_gamepad
-    try:
-        import vgamepad as vg
-    except ImportError:
-        logger.warning("vgamepad が未インストールです（pip install vgamepad）")
-        return False
-
-    try:
-        if _vx360_gamepad is None:
-            _vx360_gamepad = vg.VX360Gamepad()
-        pad = _vx360_gamepad
-        pad.press_button(button=vg.XUSB_BUTTON.XUSB_GAMEPAD_X)
-        pad.update()
-        human_delay(0.08, 0.15)
-        pad.release_button(button=vg.XUSB_BUTTON.XUSB_GAMEPAD_X)
-        pad.update()
-        logger.debug("ゲームパッド X ボタンを送信しました")
-        return True
-    except Exception as exc:
-        logger.warning("ゲームパッド X の送信に失敗しました: %s", exc)
-        _vx360_gamepad = None
-        return False
 
 
 def hotkey(*keys: str) -> None:

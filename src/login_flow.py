@@ -17,10 +17,8 @@ from .vision import MatchResult, Vision
 
 logger = logging.getLogger(__name__)
 
-# ② MODS モーダルの JOIN は画面左側、① の一覧 JOIN は右下（X で区別。Y は見ない）
+# ② MODS モーダルの JOIN は画面左側、① の一覧 JOIN は右下（X で区別）
 MODS_JOIN_SEARCH_REGION = (0.0, 0.0, 0.58, 1.0)
-DEFAULT_JOIN_MODS_POINT = (15.0, 85.0)
-FALLBACK_JOIN_MODS_POINT = (42.0, 92.0)
 MODS_SCREEN_LOOSE_THRESHOLD = 0.55
 
 
@@ -197,42 +195,8 @@ class LoginAutomator:
 
         return best
 
-    def _join_mods_uses_default_coords(self) -> bool:
-        point = self.ui.join_mods
-        if point is None:
-            return True
-        return (
-            abs(point.x_percent - DEFAULT_JOIN_MODS_POINT[0]) < 0.01
-            and abs(point.y_percent - DEFAULT_JOIN_MODS_POINT[1]) < 0.01
-        )
-
-    def _join_mods_click_point(self) -> Point:
-        if self.ui.join_mods and not self._join_mods_uses_default_coords():
-            return self.ui.join_mods
-        return Point(
-            x_percent=FALLBACK_JOIN_MODS_POINT[0],
-            y_percent=FALLBACK_JOIN_MODS_POINT[1],
-        )
-
     def _mods_screen_score(self, screen=None) -> float:
         return self._screen_score("required_mods", screen=screen)
-
-    def _click_join_mods(self, attempt: int = 0) -> bool:
-        """② MODS JOIN — UI の (X) はゲームパッド X ボタン（キーボード X ではない）"""
-        time.sleep(self.retry.transition_settle)
-        sent = input_handler.press_gamepad_x()
-        if sent:
-            logger.info("② MODS JOIN（ゲームパッド X）を送信しました")
-        else:
-            logger.warning(
-                "② ゲームパッド X を送信できませんでした（vgamepad / ViGEmBus を確認）"
-            )
-
-        if attempt > 0 or not sent:
-            point = self._join_mods_click_point()
-            self._click(point, "② MODS JOIN（座標フォールバック）")
-
-        return True
 
     def _is_mods_dialog_visible(self, screen=None) -> bool:
         """② MODS 画面の表示判定（クリック位置の妥当性は見ない）"""
@@ -545,7 +509,7 @@ class LoginAutomator:
 
             for attempt in range(2):
                 self._focus_game()
-                if not self._click_join_mods(attempt=attempt):
+                if not self._click_target_when_ready("join_mods", "② MODS JOIN"):
                     logger.warning("② MODS JOIN に失敗しました")
                     return False
                 self._wait_after_click()
