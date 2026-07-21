@@ -1,9 +1,9 @@
-"""クリック座標の画面上プレビュー（点表示）"""
+"""クリック座標の画面上プレビュー・ピック"""
 
 from __future__ import annotations
 
 import tkinter as tk
-from tkinter import ttk
+from collections.abc import Callable
 
 from .display import get_monitor
 
@@ -94,6 +94,101 @@ class CoordinatePreviewOverlay(tk.Toplevel):
         self.bind("<Button-1>", lambda _e: self.destroy())
         self.focus_set()
         self.grab_set()
+
+
+class CoordinatePickOverlay(tk.Toplevel):
+    """選択モニター上でクリック位置を％座標として取得する"""
+
+    def __init__(
+        self,
+        parent: tk.Misc,
+        *,
+        monitor_index: int,
+        label: str,
+        on_pick: Callable[[float, float], None],
+        on_cancel: Callable[[], None] | None = None,
+    ):
+        super().__init__(parent)
+        self._monitor = get_monitor(monitor_index)
+        self._on_pick = on_pick
+        self._on_cancel = on_cancel
+
+        self.overrideredirect(True)
+        self.attributes("-topmost", True)
+        self.configure(bg="#101010")
+        self.attributes("-alpha", 0.42)
+
+        geometry = (
+            f"{self._monitor.width}x{self._monitor.height}"
+            f"+{self._monitor.left}+{self._monitor.top}"
+        )
+        self.geometry(geometry)
+
+        canvas = tk.Canvas(
+            self,
+            width=self._monitor.width,
+            height=self._monitor.height,
+            bg="#101010",
+            highlightthickness=0,
+            cursor="crosshair",
+        )
+        canvas.pack(fill=tk.BOTH, expand=True)
+
+        hint = (
+            f"{label} — クリックしたい位置を押してください"
+            "　　[Esc] キャンセル"
+        )
+        canvas.create_text(
+            self._monitor.width // 2,
+            28,
+            text=hint,
+            fill="#ffffff",
+            font=("Segoe UI", 12, "bold"),
+        )
+
+        self._cross_v = canvas.create_line(0, 0, 0, 0, fill="#4a9eff", width=1)
+        self._cross_h = canvas.create_line(0, 0, 0, 0, fill="#4a9eff", width=1)
+
+        canvas.bind("<Motion>", self._on_motion)
+        canvas.bind("<Button-1>", self._on_click)
+        self.bind("<Escape>", self._on_escape)
+        self.protocol("WM_DELETE_WINDOW", self._on_escape)
+        self.after(100, self.focus_set)
+        self.grab_set()
+
+    def _on_motion(self, event: tk.Event) -> None:
+        widget = event.widget
+        widget.coords(self._cross_v, event.x, 0, event.x, self._monitor.height)
+        widget.coords(self._cross_h, 0, event.y, self._monitor.width, event.y)
+
+    def _on_click(self, event: tk.Event) -> None:
+        x_percent = round(event.x / self._monitor.width * 100, 2)
+        y_percent = round(event.y / self._monitor.height * 100, 2)
+        self._on_pick(x_percent, y_percent)
+        self.destroy()
+
+    def _on_escape(self, _event: tk.Event | None = None) -> None:
+        if self._on_cancel:
+            self._on_cancel()
+        self.destroy()
+
+
+def pick_coordinate_on_screen(
+    parent: tk.Misc,
+    *,
+    monitor_index: int,
+    label: str,
+    on_pick: Callable[[float, float], None],
+    on_cancel: Callable[[], None] | None = None,
+) -> None:
+    """モニター上のクリックで％座標を取得するオーバーレイを表示"""
+    CoordinatePickOverlay(
+        parent,
+        monitor_index=monitor_index,
+        label=label,
+        on_pick=on_pick,
+        on_cancel=on_cancel,
+    )
 
 
 def show_coordinate_preview(

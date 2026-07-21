@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import queue
 import sys
 import threading
@@ -28,7 +29,7 @@ from .app_service import (
     load_config,
     save_config,
 )
-from .coordinate_preview import show_coordinate_preview
+from .coordinate_preview import pick_coordinate_on_screen, show_coordinate_preview
 from .display import list_monitors
 from .login_flow import LoginState
 from .paths import bundle_root, prepare_runtime
@@ -73,6 +74,7 @@ OPERATION_NOTES = """【動作前の準備】
 
 【クリック座標】
 • 「クリック座標」タブで各ボタンの％座標を数値入力できます
+• 各行の「画面で設定」から、モニター上をクリックして座標を登録できます
 • 「座標のみ」モードではクリックはすべて座標、画像は画面判定のみ
 • 「座標プレビュー」で設定位置をモニター上に点表示できます
 
@@ -196,6 +198,7 @@ class LoginApp(tk.Tk):
         self.configure(bg=COLORS["bg"])
 
         self._config = {}
+        self._saved_config_snapshot: str | None = None
         self._automator = None
         self._worker: threading.Thread | None = None
         self._running = False
@@ -212,6 +215,7 @@ class LoginApp(tk.Tk):
         self._build_ui()
         self._load_settings()
         self._poll_queue()
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _setup_styles(self) -> None:
         style = ttk.Style(self)
@@ -623,6 +627,7 @@ class LoginApp(tk.Tk):
         ttk.Label(grid, text="操作", style="Card.TLabel").grid(row=0, column=0, sticky=tk.W, pady=4)
         ttk.Label(grid, text="X (%)", style="Card.TLabel").grid(row=0, column=1, sticky=tk.W, padx=(8, 4))
         ttk.Label(grid, text="Y (%)", style="Card.TLabel").grid(row=0, column=2, sticky=tk.W, padx=(8, 4))
+        ttk.Label(grid, text="", style="Card.TLabel").grid(row=0, column=3, sticky=tk.W, padx=(8, 0))
 
         for row, field in enumerate(UI_CLICK_FIELDS, start=1):
             label = field.label + ("" if field.required else "（任意）")
@@ -638,10 +643,15 @@ class LoginApp(tk.Tk):
                 grid, from_=0.0, to=100.0, increment=0.5, textvariable=y_var, width=8,
                 style="Dark.TSpinbox", font=("Segoe UI", 10),
             ).grid(row=row, column=2, sticky=tk.W, padx=(8, 0))
+            ttk.Button(
+                grid,
+                text="画面で設定",
+                command=lambda key=field.key, op_label=field.label: self._on_pick_ui_coordinate(key, op_label),
+            ).grid(row=row, column=3, sticky=tk.W, padx=(8, 0))
 
         ttk.Label(
             coord_card,
-            text="左上が (0, 0)、右下が (100, 100) です。セットアップで登録した値もここに反映されます。",
+            text="左上が (0, 0)、右下が (100, 100) です。「画面で設定」は ARK を表示しているモニター上でクリックしてください。",
             style="CardDim.TLabel",
             wraplength=560,
             justify=tk.LEFT,
@@ -680,6 +690,25 @@ class LoginApp(tk.Tk):
             self,
             monitor_index=self._get_monitor_index(),
             points=points,
+        )
+
+    def _on_pick_ui_coordinate(self, key: str, label: str) -> None:
+        if self._running:
+            messagebox.showwarning("実行中", "自動ログイン実行中は座標を設定できません。", parent=self)
+            return
+
+        x_var, y_var = self._ui_coord_vars[key]
+
+        def on_pick(x_percent: float, y_percent: float) -> None:
+            x_var.set(x_percent)
+            y_var.set(y_percent)
+            self._append_log(f"{label} の座標を設定しました ({x_percent:.1f}%, {y_percent:.1f}%)")
+
+        pick_coordinate_on_screen(
+            self,
+            monitor_index=self._get_monitor_index(),
+            label=label,
+            on_pick=on_pick,
         )
 
     def _append_log(self, message: str, channel: str = CHANNEL_USER) -> None:
@@ -741,6 +770,55 @@ class LoginApp(tk.Tk):
             x_var.set(float(entry.get("x_percent", field.default_x)))
             y_var.set(float(entry.get("y_percent", field.default_y)))
 
+        self._mark_config_saved()
+
+    def _config_snapshot(self, config: dict) -> str:
+        return json.dumps(config, sort_keys=True, ensure_ascii=False, default=str)
+
+    def _mark_config_saved(self) -> None:
+        self._saved_config_snapshot = self._config_snapshot(self._get_form_config())
+
+    def _has_unsaved_changes(self) -> bool:
+        if self._saved_config_snapshot is None:
+            return False
+        return self._config_snapshot(self._get_form_config()) != self._saved_config_snapshot
+
+    def _persist_config(self) -> None:
+        self._config = self._get_form_config()
+        save_config(self._config)
+        self._mark_config_saved()
+
+    def _on_close(self) -> None:
+        if self._running:
+            if not messagebox.askokcancel(
+                "実行中",
+                "自動ログインが実行中です。停止して終了しますか？",
+                parent=self,
+            ):
+                return
+            self._on_stop()
+
+        if self._has_unsaved_changes():
+            answer = messagebox.askyesnocancel(
+                "未保存の設定",
+                "設定が保存されていません。終了前に保存しますか？",
+                parent=self,
+            )
+            if answer is None:
+                return
+            if answer:
+                try:
+                    self._persist_config()
+                except Exception as exc:
+                    messagebox.showerror(
+                        "エラー",
+                        f"設定の保存に失敗しました:\n{exc}",
+                        parent=self,
+                    )
+                    return
+
+        self.destroy()
+
     def _collect_retry_timing(self) -> dict[str, float | int]:
         timing: dict[str, float | int] = {}
         for field in RETRY_TIMING_FIELDS:
@@ -781,8 +859,7 @@ class LoginApp(tk.Tk):
 
     def _on_save(self) -> None:
         try:
-            self._config = self._get_form_config()
-            save_config(self._config)
+            self._persist_config()
             self._append_log("設定を config.yaml に保存しました")
             messagebox.showinfo("保存完了", "設定を保存しました。")
         except Exception as exc:
