@@ -2,11 +2,13 @@
 
 display:
   monitor_index: 1  # ARK を表示しているモニター（1 始まり）
+  capture_mode: window  # window = ゲームウィンドウのみ | monitor = モニター全体
 
 retry:
   max_attempts: 0          # 最大試行回数（0 = 無制限）
   delay_seconds: 3.0       # 失敗後、①に戻ってから次の試行までの待ち（秒）
   poll_interval: 0.5       # 画面・ボタン状態のチェック間隔
+  screen_stable_polls: 2   # クリック前に同じ判定を連続 N 回満たすまで待つ（1=従来並み）
   transition_settle: 0.4   # ボタン検出後、クリック前の安定待ち
   after_click_delay: 2.0   # クリック後の画面遷移待ち
   transition_timeout: 20.0 # 次の UI が出るまでの最大待機
@@ -25,6 +27,8 @@ matching:
   button_threshold: 0.75       # ボタン画像の一致度
   button_threshold_relaxed: 0.68 # ボタン再検索時の緩い一致度
   mods_screen_threshold: 0.55  # ② MODS 画面の一致度
+  mods_detect_mode: hybrid       # hybrid | screen | button（② MODS の検出方法）
+  mods_screen_region: center     # center | full（② 画面比較の範囲）
   screen_ready_margin: 0.05    # ① 復帰判定のゆるさ
   click_mode: image  # image | image_only | coordinates | coordinates_only
 

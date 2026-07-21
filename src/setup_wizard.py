@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import logging
 import shutil
 import tkinter as tk
@@ -10,20 +11,30 @@ from pathlib import Path
 from tkinter import messagebox, ttk
 from typing import Callable
 
+import cv2
 import mss
 import numpy as np
 import yaml
 from PIL import Image, ImageTk
 
 from .display import list_monitors
-from .default_assets import resolve_button_path
-from .default_assets import ensure_default_assets
+from .coordinate_preview import percent_from_capture_click
+from .default_assets import ensure_default_assets, resolve_button_path, SETUP_SAMPLES_DIR, prune_stale_template_paths
 from .paths import app_root, bundle_root
+from .capture import CaptureSettings, DEFAULT_CAPTURE_MODE, WindowNotFoundError, resolve_capture_region
 
 logger = logging.getLogger(__name__)
 
 TEMPLATES_DIR = app_root() / "templates"
-SAMPLES_DIR = bundle_root() / "docs" / "setup_samples"
+SAMPLES_DIR = SETUP_SAMPLES_DIR
+
+# セットアップ画面キャプチャの保存形式バージョン（2 = BGRA→RGB 修正後）
+SETUP_CAPTURE_VERSION = 2
+
+_CAPTURE_MODE_LABELS = {
+    "window": "ゲームウィンドウ",
+    "monitor": "モニター全体",
+}
 
 COLORS = {
     "bg": "#1a1d23",
@@ -177,25 +188,60 @@ def _sample_path(step: SetupStep) -> Path | None:
     return path if path.exists() else None
 
 
-def _grab_screen(monitor_index: int, output_path: Path) -> Image.Image:
-    with mss.mss() as sct:
-        monitor = sct.monitors[monitor_index]
-        screenshot = sct.grab(monitor)
+def _load_capture_settings(monitor_index: int) -> CaptureSettings:
+    config_path = app_root() / "config.yaml"
+    example_path = app_root() / "config.example.yaml"
+    bundled_example = bundle_root() / "config.example.yaml"
+
+    config: dict = {}
+    for path in (config_path, example_path, bundled_example):
+        if path.exists():
+            with open(path, encoding="utf-8") as f:
+                config = yaml.safe_load(f) or {}
+            break
+
+    display = config.get("display", {})
+    window = config.get("window", {})
+    return CaptureSettings(
+        mode=display.get("capture_mode", DEFAULT_CAPTURE_MODE),
+        monitor_index=monitor_index,
+        window_title=window.get("title_contains", "ARK: Survival Ascended"),
+    )
+
+
+def _grab_screen(capture_settings: CaptureSettings, output_path: Path) -> Image.Image:
+    region = resolve_capture_region(capture_settings, strict_window=True)
+    with mss.MSS() as sct:
+        bbox = {
+            "left": region.left,
+            "top": region.top,
+            "width": region.width,
+            "height": region.height,
+        }
+        screenshot = sct.grab(bbox)
         frame = np.array(screenshot)
-        img = Image.fromarray(frame)
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGRA2RGB)
+        img = Image.fromarray(rgb)
     TEMPLATES_DIR.mkdir(parents=True, exist_ok=True)
     img.save(output_path)
     return img
 
 
-def save_setup_config(ui: dict, monitor_index: int) -> None:
+def save_setup_config(
+    ui: dict,
+    monitor_index: int,
+    capture_settings: CaptureSettings | None = None,
+    base_config: dict | None = None,
+) -> None:
     ensure_default_assets()
 
     config_path = app_root() / "config.yaml"
     example_path = app_root() / "config.example.yaml"
     bundled_example = bundle_root() / "config.example.yaml"
 
-    if config_path.exists():
+    if base_config is not None:
+        config = copy.deepcopy(base_config)
+    elif config_path.exists():
         with open(config_path, encoding="utf-8") as f:
             config = yaml.safe_load(f) or {}
     elif example_path.exists():
@@ -217,12 +263,18 @@ def save_setup_config(ui: dict, monitor_index: int) -> None:
         }
         existing_ui[key] = cleaned
     config["ui"] = existing_ui
-    config.setdefault("display", {})["monitor_index"] = monitor_index
+    display = config.setdefault("display", {})
+    display["monitor_index"] = monitor_index
+    if capture_settings is not None:
+        display["capture_mode"] = capture_settings.mode
+        config.setdefault("window", {})["title_contains"] = capture_settings.window_title
     templates = config.setdefault("templates", {})
     for step in SETUP_STEPS:
-        path = TEMPLATES_DIR / f"{step.name}.png"
-        if path.exists():
-            templates[step.name] = f"templates/{step.name}.png"
+        key = step.name
+        rel_path = f"templates/{key}.png"
+        if (TEMPLATES_DIR / f"{key}.png").exists():
+            templates[key] = rel_path
+    prune_stale_template_paths(config)
 
     config.pop("buttons", None)
 
@@ -231,21 +283,42 @@ def save_setup_config(ui: dict, monitor_index: int) -> None:
     matching.setdefault("button_threshold", 0.75)
     matching.setdefault("button_threshold_relaxed", 0.68)
     matching.setdefault("mods_screen_threshold", 0.55)
+    matching.setdefault("mods_detect_mode", "hybrid")
+    matching.setdefault("mods_screen_region", "center")
     matching.setdefault("screen_ready_margin", 0.05)
     matching.setdefault("click_mode", "image")
+
+    meta = config.setdefault("meta", {})
+    meta["setup_capture_version"] = SETUP_CAPTURE_VERSION
+    if capture_settings is not None:
+        meta["setup_capture_mode"] = capture_settings.mode
 
     with open(config_path, "w", encoding="utf-8") as f:
         yaml.dump(config, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
 
 
-class SetupIntroDialog(tk.Toplevel):
-    """モード・モニター・カウントダウン設定"""
+def _step_registered(step: SetupStep) -> bool:
+    return (TEMPLATES_DIR / f"{step.name}.png").exists()
 
-    def __init__(self, parent: tk.Misc, default_monitor_index: int = 1):
+
+def _steps_from_selection(step_names: list[str]) -> list[SetupStep]:
+    name_set = set(step_names)
+    return [step for step in SETUP_STEPS if step.name in name_set]
+
+
+class SetupIntroDialog(tk.Toplevel):
+    """モード・ステップ選択・モニター・カウントダウン設定"""
+
+    def __init__(
+        self,
+        parent: tk.Misc,
+        default_monitor_index: int = 1,
+        capture_settings: CaptureSettings | None = None,
+    ):
         super().__init__(parent)
         self.title("ASA_Login セットアップ")
         self.configure(bg=COLORS["bg"])
-        self.resizable(False, False)
+        self.resizable(True, False)
         self.result: dict | None = None
 
         self.transient(parent)
@@ -253,6 +326,8 @@ class SetupIntroDialog(tk.Toplevel):
 
         monitors = list_monitors()
         self._monitor_map = {m.label: m.index for m in monitors}
+        self._step_vars: dict[str, tk.BooleanVar] = {}
+        self._step_checks: list[tk.Checkbutton] = []
 
         tk.Label(
             self,
@@ -264,39 +339,79 @@ class SetupIntroDialog(tk.Toplevel):
 
         tk.Label(
             self,
-            text="最小モードでは ① サーバー一覧だけ登録します。",
+            text="最小・フルに加え、必要な画面だけ個別に選んで登録できます。",
             fg=COLORS["text_dim"],
             bg=COLORS["bg"],
             font=("Segoe UI", 10),
+            wraplength=480,
+            justify=tk.LEFT,
         ).pack(anchor=tk.W, padx=20, pady=(0, 12))
 
         body = tk.Frame(self, bg=COLORS["surface"], padx=14, pady=12)
-        body.pack(fill=tk.X, padx=16, pady=(0, 8))
+        body.pack(fill=tk.BOTH, expand=True, padx=16, pady=(0, 8))
 
         tk.Label(body, text="モード", fg=COLORS["accent"], bg=COLORS["surface"], font=("Segoe UI", 10, "bold")).pack(anchor=tk.W)
         self.mode_var = tk.StringVar(value="minimal")
-        tk.Radiobutton(
+        for text, value in (
+            ("最小（推奨）… ① サーバー一覧のみ", "minimal"),
+            ("フル … すべての画面を順に登録", "full"),
+            ("個別 … 下の一覧から選んで登録", "custom"),
+        ):
+            tk.Radiobutton(
+                body,
+                text=text,
+                variable=self.mode_var,
+                value=value,
+                command=self._sync_custom_state,
+                bg=COLORS["surface"],
+                fg=COLORS["text"],
+                selectcolor=COLORS["surface2"],
+                activebackground=COLORS["surface"],
+                font=("Segoe UI", 10),
+            ).pack(anchor=tk.W, pady=2)
+
+        tk.Label(
             body,
-            text="最小（推奨）… サーバー一覧のみ",
-            variable=self.mode_var,
-            value="minimal",
+            text="登録する画面（個別モード）",
+            fg=COLORS["accent"],
             bg=COLORS["surface"],
-            fg=COLORS["text"],
-            selectcolor=COLORS["surface2"],
-            activebackground=COLORS["surface"],
-            font=("Segoe UI", 10),
-        ).pack(anchor=tk.W, pady=2)
-        tk.Radiobutton(
-            body,
-            text="フル … すべての画面を登録",
-            variable=self.mode_var,
-            value="full",
-            bg=COLORS["surface"],
-            fg=COLORS["text"],
-            selectcolor=COLORS["surface2"],
-            activebackground=COLORS["surface"],
-            font=("Segoe UI", 10),
-        ).pack(anchor=tk.W, pady=2)
+            font=("Segoe UI", 10, "bold"),
+        ).pack(anchor=tk.W, pady=(10, 4))
+
+        list_frame = tk.Frame(body, bg=COLORS["surface2"], padx=8, pady=8)
+        list_frame.pack(fill=tk.BOTH, expand=True)
+
+        for step in SETUP_STEPS:
+            registered = _step_registered(step)
+            suffix = " — 登録済み" if registered else ""
+            var = tk.BooleanVar(value=step.name == "server_list")
+            self._step_vars[step.name] = var
+            cb = tk.Checkbutton(
+                list_frame,
+                text=f"{step.title}{suffix}",
+                variable=var,
+                bg=COLORS["surface2"],
+                fg=COLORS["text"],
+                selectcolor=COLORS["surface"],
+                activebackground=COLORS["surface2"],
+                font=("Segoe UI", 10),
+                anchor=tk.W,
+                wraplength=440,
+                justify=tk.LEFT,
+            )
+            cb.pack(anchor=tk.W, pady=1)
+            self._step_checks.append(cb)
+
+        preset_row = tk.Frame(body, bg=COLORS["surface"])
+        preset_row.pack(fill=tk.X, pady=(6, 0))
+        self._preset_buttons: list[ttk.Button] = []
+        for text, command in (
+            ("すべて選択", self._select_all_steps),
+            ("すべて解除", self._clear_all_steps),
+        ):
+            btn = ttk.Button(preset_row, text=text, command=command)
+            btn.pack(side=tk.LEFT, padx=(0, 6))
+            self._preset_buttons.append(btn)
 
         tk.Label(body, text="ARK モニター", fg=COLORS["accent"], bg=COLORS["surface"], font=("Segoe UI", 10, "bold")).pack(anchor=tk.W, pady=(10, 4))
         default_label = next((m.label for m in monitors if m.index == default_monitor_index), monitors[0].label if monitors else "")
@@ -312,6 +427,18 @@ class SetupIntroDialog(tk.Toplevel):
         monitor_menu["menu"].configure(bg=COLORS["surface2"], fg=COLORS["text"])
         monitor_menu.pack(anchor=tk.W)
 
+        if capture_settings is not None:
+            capture_label = _CAPTURE_MODE_LABELS.get(capture_settings.mode, capture_settings.mode)
+            tk.Label(
+                body,
+                text=f"キャプチャ範囲: {capture_label}（メイン画面の設定）",
+                fg=COLORS["text_dim"],
+                bg=COLORS["surface"],
+                font=("Segoe UI", 9),
+                wraplength=420,
+                justify=tk.LEFT,
+            ).pack(anchor=tk.W, pady=(8, 0))
+
         tk.Label(body, text="キャプチャカウントダウン (秒)", fg=COLORS["accent"], bg=COLORS["surface"], font=("Segoe UI", 10, "bold")).pack(anchor=tk.W, pady=(10, 4))
         self.countdown_var = tk.IntVar(value=5)
         tk.Spinbox(body, from_=1, to=15, textvariable=self.countdown_var, width=6).pack(anchor=tk.W)
@@ -322,17 +449,51 @@ class SetupIntroDialog(tk.Toplevel):
         ttk.Button(footer, text="開始", command=self._ok).pack(side=tk.RIGHT)
 
         self.protocol("WM_DELETE_WINDOW", self._cancel)
+        self._sync_custom_state()
         self.update_idletasks()
-        self.geometry(f"+{parent.winfo_rootx() + 40}+{parent.winfo_rooty() + 40}")
+        self.geometry(f"520x640+{parent.winfo_rootx() + 40}+{max(20, parent.winfo_rooty() + 20)}")
+
+    def _sync_custom_state(self) -> None:
+        enabled = self.mode_var.get() == "custom"
+        state = tk.NORMAL if enabled else tk.DISABLED
+        for cb in self._step_checks:
+            cb.configure(state=state)
+        for btn in self._preset_buttons:
+            btn.state(["!disabled"] if enabled else ["disabled"])
+
+    def _select_all_steps(self) -> None:
+        for var in self._step_vars.values():
+            var.set(True)
+
+    def _clear_all_steps(self) -> None:
+        for var in self._step_vars.values():
+            var.set(False)
 
     def _cancel(self) -> None:
         self.result = None
         self.destroy()
 
+    def _selected_step_names(self) -> list[str]:
+        mode = self.mode_var.get()
+        if mode == "minimal":
+            return ["server_list"]
+        if mode == "full":
+            return [step.name for step in SETUP_STEPS]
+        return [name for name, var in self._step_vars.items() if var.get()]
+
     def _ok(self) -> None:
+        step_names = self._selected_step_names()
+        if not step_names:
+            messagebox.showwarning(
+                "ステップ未選択",
+                "個別モードでは、登録する画面を1つ以上選んでください。",
+                parent=self,
+            )
+            return
         monitor_label = self.monitor_var.get()
         self.result = {
             "mode": self.mode_var.get(),
+            "step_names": step_names,
             "monitor_index": self._monitor_map.get(monitor_label, 1),
             "countdown": int(self.countdown_var.get()),
         }
@@ -342,7 +503,15 @@ class SetupIntroDialog(tk.Toplevel):
 class StepGuideDialog(tk.Toplevel):
     """ステップ案内"""
 
-    def __init__(self, parent: tk.Misc, step: SetupStep, step_index: int, total_steps: int):
+    def __init__(
+        self,
+        parent: tk.Misc,
+        step: SetupStep,
+        step_index: int,
+        total_steps: int,
+        *,
+        allow_skip: bool = True,
+    ):
         super().__init__(parent)
         self.title("ASA_Login セットアップ")
         self.configure(bg=COLORS["bg"])
@@ -387,7 +556,7 @@ class StepGuideDialog(tk.Toplevel):
         footer = tk.Frame(self, bg=COLORS["bg"])
         footer.pack(fill=tk.X, padx=16, pady=(4, 14))
         ttk.Button(footer, text="キャンセル", command=lambda: self._choose("cancel")).pack(side=tk.LEFT)
-        if not step.required:
+        if allow_skip and not step.required:
             ttk.Button(footer, text="スキップ", command=lambda: self._choose("skip")).pack(side=tk.RIGHT, padx=(6, 0))
         ttk.Button(footer, text="キャプチャへ進む", command=lambda: self._choose("continue")).pack(side=tk.RIGHT)
 
@@ -401,13 +570,19 @@ class StepGuideDialog(tk.Toplevel):
 class CaptureDialog(tk.Toplevel):
     """カウントダウン付き画面キャプチャ"""
 
-    def __init__(self, parent: tk.Misc, step: SetupStep, monitor_index: int, countdown: int):
+    def __init__(
+        self,
+        parent: tk.Misc,
+        step: SetupStep,
+        capture_settings: CaptureSettings,
+        countdown: int,
+    ):
         super().__init__(parent)
         self.title("画面キャプチャ")
         self.configure(bg=COLORS["bg"])
         self.resizable(False, False)
         self.success = False
-        self._monitor_index = monitor_index
+        self._capture_settings = capture_settings
         self._output_path = TEMPLATES_DIR / f"{step.name}.png"
         self._countdown = countdown
         self._timer_id: str | None = None
@@ -416,9 +591,15 @@ class CaptureDialog(tk.Toplevel):
         self.grab_set()
 
         tk.Label(self, text=step.title, fg=COLORS["text"], bg=COLORS["bg"], font=("Segoe UI", 14, "bold")).pack(padx=20, pady=(16, 8))
+        capture_hint = (
+            "ARK で該当画面を表示してから「キャプチャ開始」を押してください。"
+            "（ゲームウィンドウ内のみキャプチャします）"
+            if capture_settings.mode == "window"
+            else "ARK で該当画面を表示してから「キャプチャ開始」を押してください。"
+        )
         tk.Label(
             self,
-            text="ARK で該当画面を表示してから「キャプチャ開始」を押してください。",
+            text=capture_hint,
             fg=COLORS["text_dim"],
             bg=COLORS["bg"],
             font=("Segoe UI", 10),
@@ -450,9 +631,11 @@ class CaptureDialog(tk.Toplevel):
             self.status_label.configure(text="キャプチャ中...")
             self.update_idletasks()
             try:
-                _grab_screen(self._monitor_index, self._output_path)
+                _grab_screen(self._capture_settings, self._output_path)
                 self.success = True
                 self.status_label.configure(text="保存しました")
+            except WindowNotFoundError as exc:
+                messagebox.showerror("エラー", str(exc), parent=self)
             except Exception as exc:
                 messagebox.showerror("エラー", f"キャプチャに失敗しました:\n{exc}", parent=self)
             self.after(600, self.destroy)
@@ -536,18 +719,108 @@ class ClickCalibrateDialog(tk.Toplevel):
     def _on_click(self, event) -> None:
         orig_x = int(event.x / self._scale)
         orig_y = int(event.y / self._scale)
-        data = {
-            "x_percent": round(orig_x / self._img_w * 100, 2),
-            "y_percent": round(orig_y / self._img_h * 100, 2),
-        }
+        x_percent, y_percent = percent_from_capture_click(
+            orig_x,
+            orig_y,
+            width=self._img_w,
+            height=self._img_h,
+        )
+        data = {"x_percent": x_percent, "y_percent": y_percent}
         self.result = data
         self.status.configure(text=f"登録しました ({data['x_percent']}%, {data['y_percent']}%)")
         self.after(500, self.destroy)
 
 
+def _validate_server_list_ui(steps: list[SetupStep], ui: dict, parent: tk.Misc) -> bool:
+    ran_server_list = any(step.name == "server_list" for step in steps)
+    if ran_server_list and "join_server_list" not in ui and not resolve_button_path("join_server_list"):
+        messagebox.showerror("エラー", "① サーバー一覧の JOIN 座標が未登録です。", parent=parent)
+        return False
+    return True
+
+
+def _complete_setup(
+    root: tk.Misc,
+    *,
+    owns_root: bool,
+    ui: dict,
+    monitor_index: int,
+    wizard_capture: CaptureSettings,
+    base_config: dict | None,
+    completed_steps: list[SetupStep],
+    completed_titles: list[str],
+    on_complete: Callable[[], None] | None,
+) -> bool:
+    if not _validate_server_list_ui(completed_steps, ui, root):
+        if owns_root:
+            root.destroy()
+        return False
+
+    capture_hint = (
+        "\nキャプチャ範囲: ゲームウィンドウ"
+        if wizard_capture.mode == "window"
+        else "\nキャプチャ範囲: モニター全体"
+    )
+    step_summary = "、".join(completed_titles)
+    save_setup_config(ui, monitor_index, wizard_capture, base_config=base_config)
+    messagebox.showinfo(
+        "セットアップ完了",
+        "config.yaml を保存しました。"
+        f"{capture_hint}\n\n"
+        f"登録した画面: {step_summary}\n\n"
+        "解像度・キャプチャ範囲・表示モードを変更した場合は、再度セットアップが必要です。",
+        parent=root,
+    )
+    if on_complete:
+        on_complete()
+    if owns_root:
+        root.destroy()
+    return True
+
+
+def _offer_partial_save(
+    root: tk.Misc,
+    *,
+    owns_root: bool,
+    ui: dict,
+    monitor_index: int,
+    wizard_capture: CaptureSettings,
+    base_config: dict | None,
+    completed_steps: list[SetupStep],
+    completed_titles: list[str],
+    on_complete: Callable[[], None] | None,
+) -> bool:
+    if not completed_titles:
+        if owns_root:
+            root.destroy()
+        return False
+    if not messagebox.askyesno(
+        "セットアップ中断",
+        f"完了した {len(completed_titles)} 件を保存しますか？\n\n"
+        + "、".join(completed_titles),
+        parent=root,
+    ):
+        if owns_root:
+            root.destroy()
+        return False
+    return _complete_setup(
+        root,
+        owns_root=owns_root,
+        ui=ui,
+        monitor_index=monitor_index,
+        wizard_capture=wizard_capture,
+        base_config=base_config,
+        completed_steps=completed_steps,
+        completed_titles=completed_titles,
+        on_complete=on_complete,
+    )
+
+
 def run_wizard_gui(
     parent: tk.Misc | None = None,
     default_monitor_index: int = 1,
+    capture_settings: CaptureSettings | None = None,
+    base_config: dict | None = None,
     on_complete: Callable[[], None] | None = None,
 ) -> bool:
     """GUI セットアップウィザード。成功時 True"""
@@ -559,32 +832,73 @@ def run_wizard_gui(
     if owns_root:
         root.withdraw()
 
-    intro = SetupIntroDialog(root, default_monitor_index=default_monitor_index)
+    preview_capture = capture_settings or _load_capture_settings(default_monitor_index)
+    intro = SetupIntroDialog(
+        root,
+        default_monitor_index=default_monitor_index,
+        capture_settings=preview_capture,
+    )
     root.wait_window(intro)
     if not intro.result:
         if owns_root:
             root.destroy()
         return False
 
-    mode = intro.result["mode"]
     monitor_index = intro.result["monitor_index"]
     countdown = intro.result["countdown"]
-    steps = list(SETUP_STEPS) if mode == "full" else [SETUP_STEPS[0]]
+    base_capture = capture_settings or _load_capture_settings(monitor_index)
+    wizard_capture = CaptureSettings(
+        mode=base_capture.mode,
+        monitor_index=monitor_index,
+        window_title=base_capture.window_title,
+    )
+    steps = _steps_from_selection(intro.result.get("step_names", ["server_list"]))
+    setup_mode = intro.result.get("mode", "minimal")
     ui: dict = {}
+    completed_steps: list[SetupStep] = []
+    completed_titles: list[str] = []
 
     for index, step in enumerate(steps, start=1):
-        guide = StepGuideDialog(root, step, index, len(steps))
+        allow_skip = setup_mode != "custom"
+        guide = StepGuideDialog(
+            root,
+            step,
+            index,
+            len(steps),
+            allow_skip=allow_skip,
+        )
         root.wait_window(guide)
         if guide.action == "cancel":
-            if owns_root:
-                root.destroy()
-            return False
+            return _offer_partial_save(
+                root,
+                owns_root=owns_root,
+                ui=ui,
+                monitor_index=monitor_index,
+                wizard_capture=wizard_capture,
+                base_config=base_config,
+                completed_steps=completed_steps,
+                completed_titles=completed_titles,
+                on_complete=on_complete,
+            )
         if guide.action == "skip":
             continue
 
-        capture = CaptureDialog(root, step, monitor_index, countdown)
+        capture = CaptureDialog(root, step, wizard_capture, countdown)
         root.wait_window(capture)
         if not capture.success:
+            if step.required and setup_mode == "custom":
+                messagebox.showwarning("セットアップ中断", "選択した画面のキャプチャが必要です。", parent=root)
+                return _offer_partial_save(
+                    root,
+                    owns_root=owns_root,
+                    ui=ui,
+                    monitor_index=monitor_index,
+                    wizard_capture=wizard_capture,
+                    base_config=base_config,
+                    completed_steps=completed_steps,
+                    completed_titles=completed_titles,
+                    on_complete=on_complete,
+                )
             if step.required:
                 messagebox.showwarning("セットアップ中断", "必須ステップが完了していません。", parent=root)
                 if owns_root:
@@ -604,27 +918,44 @@ def run_wizard_gui(
             root.wait_window(calibrate)
             if calibrate.result:
                 ui[step.click_key] = calibrate.result
-            elif step.required:
+            elif step.required or setup_mode == "custom":
+                completed_steps.append(step)
+                completed_titles.append(step.title)
                 messagebox.showwarning("セットアップ中断", "クリック登録が必要です。", parent=root)
-                if owns_root:
-                    root.destroy()
-                return False
+                return _offer_partial_save(
+                    root,
+                    owns_root=owns_root,
+                    ui=ui,
+                    monitor_index=monitor_index,
+                    wizard_capture=wizard_capture,
+                    base_config=base_config,
+                    completed_steps=completed_steps,
+                    completed_titles=completed_titles,
+                    on_complete=on_complete,
+                )
+            else:
+                continue
 
-    if "join_server_list" not in ui and not resolve_button_path("join_server_list"):
-        messagebox.showerror("エラー", "① サーバー一覧の JOIN 座標が未登録です。", parent=root)
+        completed_steps.append(step)
+        completed_titles.append(step.title)
+
+    if not completed_titles:
+        messagebox.showwarning("セットアップ中断", "登録された画面がありません。", parent=root)
         if owns_root:
             root.destroy()
         return False
 
-    save_setup_config(ui, monitor_index)
-    messagebox.showinfo("セットアップ完了", "config.yaml を保存しました。", parent=root)
-
-    if on_complete:
-        on_complete()
-
-    if owns_root:
-        root.destroy()
-    return True
+    return _complete_setup(
+        root,
+        owns_root=owns_root,
+        ui=ui,
+        monitor_index=monitor_index,
+        wizard_capture=wizard_capture,
+        base_config=base_config,
+        completed_steps=completed_steps,
+        completed_titles=completed_titles,
+        on_complete=on_complete,
+    )
 
 
 def run_wizard(default_monitor_index: int = 1) -> bool:

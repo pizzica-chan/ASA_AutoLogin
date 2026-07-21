@@ -21,7 +21,7 @@ class MonitorInfo:
 
 
 def list_monitors() -> list[MonitorInfo]:
-    with mss.mss() as sct:
+    with mss.MSS() as sct:
         monitors = []
         for i, mon in enumerate(sct.monitors[1:], start=1):
             monitors.append(

@@ -59,7 +59,8 @@ ARK: Survival Ascended のサーバー参加を自動化する際の画面遷移
 | **操作** | 表示された場合のみ、モーダル**左下**の **JOIN**（オレンジ色）をクリック |
 | **テンプレート** | `templates/required_mods.png`（任意） |
 | **クリック位置** | `ui.join_mods` |
-| **待機時間** | JOIN 後最大 `mods_wait_seconds`（デフォルト 5 秒）で画面出現を監視 |
+| **待機時間** | ① JOIN 後最大 `mods_wait_seconds`（デフォルト 8 秒）で画面出現を監視 |
+| **検出方式** | `matching.mods_detect_mode`（`hybrid` / `screen` / `button`、デフォルト `hybrid`）。`hybrid` では画面類似度（中央モーダル領域）と `join_mods` ボタン PNG のいずれかで判定 |
 
 **補足:** 一覧画面右下の JOIN（①）とは別ボタンです。
 
@@ -126,10 +127,10 @@ ARK: Survival Ascended のサーバー参加を自動化する際の画面遷移
 | **画面** | サーバー一覧だが一覧が空（`MULTIPLAYER SERVERS: 0`） |
 | **表示** | 中央に `Joining server ...` メッセージ |
 | **操作** | 画面**左下**の **BACK** をクリック |
-| **テンプレート** | `templates/server_list_empty.png` |
+| **テンプレート** | `templates/server_list_empty.png`（任意） |
 | **クリック位置** | `ui.back_empty_list` |
 
-**補足:** ③ で CANCEL を押した直後に遷移することが多いです。
+**補足:** ③ で CANCEL を押した直後に遷移することが多いです。`server_list_empty.png` 未登録時は `back_empty_list` ボタン PNG で検出可能（座標のみモード含む）。
 
 ---
 
@@ -139,9 +140,12 @@ ARK: Survival Ascended のサーバー参加を自動化する際の画面遷移
 |------|------|
 | **画面** | メインメニュー（DRAGONTOPIA / JOIN GAME 等のカード） |
 | **操作** | 中央の **JOIN GAME** カードをクリック |
-| **テンプレート** | `templates/main_menu.png` |
-| **クリック位置** | `ui.join_game` |
+| **テンプレート** | `templates/main_menu.png`（任意・同梱フォールバックは⑤枚タイル向け） |
+| **クリック位置** | `ui.join_game`（1 点。4枚 / 5枚どちらのレイアウトでも、自分の JOIN GAME 位置を登録） |
+| **ボタン PNG** | `join_game.png` と `join_game_center.png` を**毎回両方試行**（レイアウト自動判定なし） |
 | **遷移先** | ① のサーバー一覧（対象サーバー選択済み） |
+
+**補足:** ④枚タイルでは `join_game_center.png`、⑤枚タイルでは `join_game.png` が当たりやすい。到達判定はボタン PNG 優先、画面テンプレートは補助。
 
 ---
 
@@ -164,8 +168,18 @@ ARK: Survival Ascended のサーバー参加を自動化する際の画面遷移
 | **フォールバック** | ボタン画像が見つからない場合、`config.yaml` の `ui` 座標でクリック |
 
 - 画面判定の閾値: `matching.screen_threshold`（デフォルト `0.75`）
-- ボタン検索の閾値: `matching.button_threshold`（デフォルト `0.75`）
+- ボタン検索の閾値: `matching.button_threshold`（デフォルト `0.75`）、`join_game` は緩い閾値（`button_threshold_relaxed`）も使用
 - ボタン画像は **exe 横の `templates/buttons/`** に配置。初回起動時に同梱サンプルをコピーし、同じファイル名で PNG を差し替え可能
+
+### 座標のみモード（`click_mode: coordinates_only`）
+
+| 項目 | 動作 |
+|------|------|
+| クリック | すべて `ui` の％座標 |
+| 到達判定 | 画面テンプレート ＋ ボタン PNG（クリックには使わない） |
+| ② MODS | `mods_detect_mode: hybrid` 推奨（画面中央領域 ＋ `join_mods` ボタン） |
+| ③-A / ⑥ | 画面未登録時は `cancel_failed` / `accept_network_failure` ボタン PNG |
+| ④ / ⑤ | 画面未登録時は `back_empty_list` / `join_game`（2 PNG 試行）ボタン PNG |
 
 ## セットアップとの対応
 

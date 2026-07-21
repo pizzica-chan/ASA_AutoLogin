@@ -7,6 +7,8 @@ import queue
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from .paths import app_root, ensure_app_dirs
 
 CHANNEL_USER = "user"
@@ -22,6 +24,28 @@ USER_FORMAT = "%(asctime)s  %(message)s"
 DETAIL_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 DATE_FORMAT = "%H:%M:%S"
 FILE_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
+
+TEMPLATE_SCREEN_KEYS = (
+    "server_list",
+    "required_mods",
+    "connection_failed",
+    "login_movie",
+    "network_failure",
+    "title_screen",
+    "server_list_empty",
+    "main_menu",
+    "in_game",
+)
+
+BUTTON_KEYS = (
+    "join_server_list",
+    "join_mods",
+    "cancel_failed",
+    "back_empty_list",
+    "join_game",
+    "join_game_center",
+    "accept_network_failure",
+)
 
 _gui_handlers: list[logging.Handler] = []
 _file_handlers: list[logging.Handler] = []
@@ -125,6 +149,138 @@ def setup_logging(config: dict | None = None, log_queue: queue.Queue | None = No
         user_path,
         detail_path,
     )
+
+
+def log_runtime_config_detail(config: dict | None, *, runtime: dict[str, Any] | None = None) -> None:
+    """実行開始時の設定値を詳細ログへすべて書き出す"""
+    config = config or {}
+    runtime = runtime or {}
+
+    detail_log.info("=== 実行時設定（config.yaml 相当） ===")
+    if config:
+        dumped = yaml.dump(
+            config,
+            allow_unicode=True,
+            default_flow_style=False,
+            sort_keys=False,
+        )
+        for line in dumped.rstrip().splitlines():
+            detail_log.info("  %s", line)
+    else:
+        detail_log.info("  (設定が空です)")
+
+    detail_log.info("=== 解決済みランタイム情報 ===")
+    for key, value in runtime.items():
+        if isinstance(value, list):
+            if not value:
+                detail_log.info("  %s: (未設定)", key)
+            elif len(value) == 1:
+                detail_log.info("  %s: %s", key, value[0])
+            else:
+                detail_log.info("  %s:", key)
+                for item in value:
+                    detail_log.info("    - %s", item)
+        elif isinstance(value, dict):
+            detail_log.info("  %s:", key)
+            for sub_key, sub_value in value.items():
+                detail_log.info("    %s: %s", sub_key, sub_value)
+        else:
+            detail_log.info("  %s: %s", key, value)
+
+
+def build_runtime_config_snapshot(
+    config: dict,
+    *,
+    vision: Any | None = None,
+    window_title: str | None = None,
+    bring_to_front: bool | None = None,
+    buttons: Any | None = None,
+) -> dict[str, Any]:
+    """config から詳細ログ用の解決済み情報を組み立てる"""
+    from .button_templates import ButtonConfig
+    from .capture import CaptureSettings, WindowNotFoundError, resolve_capture_region
+    from .default_assets import resolve_screen_path, screen_template_source
+
+    display = config.get("display", {})
+    window = config.get("window", {})
+    capture_settings = CaptureSettings(
+        mode=display.get("capture_mode", "window"),
+        monitor_index=int(display.get("monitor_index", 1)),
+        window_title=window.get("title_contains", "ARK: Survival Ascended"),
+    )
+
+    snapshot: dict[str, Any] = {
+        "capture_mode": capture_settings.mode,
+        "monitor_index": capture_settings.monitor_index,
+        "window_title": window_title or capture_settings.window_title,
+        "bring_to_front": bring_to_front,
+    }
+
+    if vision is not None:
+        snapshot["monitor_label"] = vision.monitor.label
+
+    try:
+        region = resolve_capture_region(
+            capture_settings,
+            strict_window=capture_settings.mode == "window",
+        )
+        snapshot["capture_region"] = {
+            "mode": region.mode,
+            "left": region.left,
+            "top": region.top,
+            "width": region.width,
+            "height": region.height,
+        }
+    except WindowNotFoundError as exc:
+        snapshot["capture_region"] = f"未解決 ({exc})"
+
+    templates_cfg = config.get("templates", {})
+    resolved_templates: dict[str, str | None] = {}
+    template_sources: dict[str, str] = {}
+    for name in TEMPLATE_SCREEN_KEYS:
+        user_path = templates_cfg.get(name)
+        resolved_templates[name] = resolve_screen_path(name, user_path)
+        template_sources[name] = screen_template_source(name, user_path)
+    snapshot["templates_resolved"] = resolved_templates
+    snapshot["templates_source"] = template_sources
+
+    matching = config.get("matching", {})
+    snapshot["matching"] = {
+        key: matching[key]
+        for key in (
+            "click_mode",
+            "mods_detect_mode",
+            "mods_screen_region",
+            "screen_threshold",
+            "mods_screen_threshold",
+            "button_threshold",
+        )
+        if key in matching
+    }
+    button_cfg = buttons if buttons is not None else ButtonConfig.from_dict(
+        config.get("buttons", {}),
+        matching,
+    )
+    resolved_buttons: dict[str, list[str]] = {}
+    for key in BUTTON_KEYS:
+        resolved_buttons[key] = button_cfg.list_paths(key)
+    snapshot["buttons_resolved"] = resolved_buttons
+
+    ui_cfg = config.get("ui", {})
+    if ui_cfg:
+        snapshot["ui_percent"] = ui_cfg
+
+    meta = config.get("meta")
+    if meta:
+        snapshot["meta"] = meta
+
+    user_path, detail_path = _resolve_log_paths(config)
+    snapshot["log_files"] = {
+        "user": str(user_path),
+        "detail": str(detail_path),
+    }
+
+    return snapshot
 
 
 def teardown_logging() -> None:

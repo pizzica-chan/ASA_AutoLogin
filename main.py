@@ -36,7 +36,7 @@ def run_login(config: dict) -> int:
     print("停止するには Ctrl+C を押してください。")
     print()
 
-    for i in range(5, 0, -1):
+    for i in range(max(0, int(config.get("retry", {}).get("start_countdown_seconds", 3))), 0, -1):
         print(f"  {i}秒後に開始...")
         time.sleep(1)
 
@@ -94,7 +94,6 @@ def main() -> None:
         print("  python gui.py  → 「セットアップ」ボタン")
         sys.exit(1)
 
-    log_cfg = config.get("logging", {})
     setup_logging(config)
     sys.exit(run_login(config))
 

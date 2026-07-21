@@ -16,10 +16,16 @@
       --success: #34c759;
       --warning: #ff9f0a;
       --danger: #ff453a;
-      --max-width: 920px;
+      --content-max: 920px;
+      --sidebar-width: 15.5rem;
+      --shell-max: 1280px;
     }
 
     * { box-sizing: border-box; }
+
+    html {
+      scroll-behavior: smooth;
+    }
 
     body {
       margin: 0;
@@ -30,65 +36,211 @@
       font-size: 16px;
     }
 
-    a { color: var(--accent); }
-    a:hover { text-decoration: none; }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
 
     header {
       background: linear-gradient(135deg, #1e2430 0%, #242830 100%);
       border-bottom: 1px solid var(--border);
-      padding: 2.5rem 1.5rem 2rem;
+      padding: 2rem 1.5rem 1.5rem;
     }
 
-    header .inner,
-    main,
-    footer .inner {
-      max-width: var(--max-width);
+    header .inner {
+      max-width: var(--shell-max);
       margin: 0 auto;
     }
 
     header h1 {
-      margin: 0 0 0.4rem;
-      font-size: 2rem;
+      margin: 0 0 0.35rem;
+      font-size: 1.85rem;
       font-weight: 700;
     }
 
     header p {
       margin: 0;
       color: var(--text-dim);
+      font-size: 0.95rem;
     }
 
-    main {
-      padding: 2rem 1.5rem 4rem;
+    .nav-toggle {
+      display: none;
+      position: fixed;
+      bottom: 1.25rem;
+      right: 1.25rem;
+      z-index: 120;
+      border: 1px solid var(--border);
+      background: var(--accent);
+      color: #fff;
+      font: inherit;
+      font-size: 0.9rem;
+      font-weight: 600;
+      padding: 0.65rem 1rem;
+      border-radius: 999px;
+      cursor: pointer;
+      box-shadow: 0 4px 18px rgba(0, 0, 0, 0.35);
     }
 
-    nav.toc {
+    .nav-toggle:hover {
+      background: #3d8ce6;
+    }
+
+    .page-shell {
+      max-width: var(--shell-max);
+      margin: 0 auto;
+      padding: 0 1rem 2rem;
+      display: flex;
+      align-items: flex-start;
+      gap: 2rem;
+    }
+
+    .sidebar-backdrop {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.45);
+      z-index: 90;
+    }
+
+    .sidebar {
+      flex: 0 0 var(--sidebar-width);
+      width: var(--sidebar-width);
+      position: sticky;
+      top: 1rem;
+      align-self: flex-start;
+      max-height: calc(100vh - 2rem);
+      overflow: auto;
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: 10px;
-      padding: 1.25rem 1.5rem;
-      margin-bottom: 2.5rem;
+      z-index: 100;
     }
 
-    nav.toc h2 {
-      margin: 0 0 0.75rem;
-      font-size: 1rem;
+    .sidebar-inner {
+      padding: 1rem 0.85rem 1.1rem;
+    }
+
+    .sidebar-title {
+      margin: 0 0 0.65rem;
+      padding: 0 0.45rem;
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
       color: var(--accent);
     }
 
-    nav.toc ol {
+    .nav-list,
+    .nav-sub {
+      list-style: none;
       margin: 0;
-      padding-left: 1.25rem;
-      columns: 2;
-      column-gap: 2rem;
+      padding: 0;
     }
 
-    @media (max-width: 640px) {
-      nav.toc ol { columns: 1; }
+    .nav-list > li {
+      margin-bottom: 0.15rem;
+    }
+
+    .nav-list a,
+    .nav-sub a {
+      display: block;
+      padding: 0.38rem 0.55rem;
+      border-radius: 6px;
+      color: var(--text-dim);
+      font-size: 0.88rem;
+      line-height: 1.35;
+      border-left: 3px solid transparent;
+    }
+
+    .nav-list a:hover,
+    .nav-sub a:hover {
+      color: var(--text);
+      background: var(--surface2);
+      text-decoration: none;
+    }
+
+    .nav-list a.active,
+    .nav-sub a.active {
+      color: var(--text);
+      background: rgba(74, 158, 255, 0.12);
+      border-left-color: var(--accent);
+      font-weight: 600;
+    }
+
+    .nav-group > a {
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .nav-sub {
+      margin: 0.15rem 0 0.35rem 0.55rem;
+      padding-left: 0.45rem;
+      border-left: 1px solid var(--border);
+    }
+
+    .nav-sub a {
+      font-size: 0.82rem;
+      padding: 0.28rem 0.45rem;
+    }
+
+    .main-column {
+      flex: 1;
+      min-width: 0;
+      max-width: var(--content-max);
+    }
+
+    main {
+      padding: 1.75rem 0 3rem;
+    }
+
+    footer .inner {
+      max-width: var(--content-max);
+    }
+
+    @media (max-width: 1023px) {
+      .nav-toggle {
+        display: block;
+      }
+
+      .page-shell {
+        display: block;
+        padding: 0 1rem 4.5rem;
+      }
+
+      .sidebar {
+        position: fixed;
+        top: 0;
+        left: 0;
+        bottom: 0;
+        max-height: none;
+        width: min(18rem, 86vw);
+        border-radius: 0;
+        border-left: none;
+        border-top: none;
+        border-bottom: none;
+        transform: translateX(-105%);
+        transition: transform 0.22s ease;
+      }
+
+      .sidebar.open {
+        transform: translateX(0);
+      }
+
+      .sidebar-backdrop.visible {
+        display: block;
+      }
+
+      body.sidebar-open {
+        overflow: hidden;
+      }
+
+      main {
+        padding-top: 1.25rem;
+      }
     }
 
     section {
       margin-bottom: 3rem;
-      scroll-margin-top: 1rem;
+      scroll-margin-top: 1.25rem;
     }
 
     h2 {
@@ -258,6 +410,65 @@
       margin-right: 0.35rem;
       vertical-align: middle;
     }
+
+    .tune-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-left: 4px solid var(--accent);
+      border-radius: 10px;
+      padding: 1.1rem 1.25rem;
+      margin: 1rem 0;
+      scroll-margin-top: 1.25rem;
+    }
+
+    h3[id] {
+      scroll-margin-top: 1.25rem;
+    }
+
+    .tune-card h4 {
+      margin: 0 0 0.6rem;
+      color: var(--text);
+    }
+
+    .tune-card .symptom {
+      color: var(--warning);
+      font-size: 0.92rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .tune-card ol {
+      margin: 0.5rem 0 0;
+      padding-left: 1.25rem;
+    }
+
+    .tune-card li { margin-bottom: 0.35rem; }
+
+    .matrix-note {
+      font-size: 0.88rem;
+      color: var(--text-dim);
+      margin-top: 0.5rem;
+    }
+
+    table.symptom-matrix td:first-child {
+      color: var(--warning);
+      font-weight: 500;
+      white-space: nowrap;
+    }
+
+    table.symptom-matrix td:nth-child(2) {
+      min-width: 8rem;
+    }
+
+    table.symptom-matrix .priority {
+      display: inline-block;
+      font-size: 0.72rem;
+      padding: 0.1em 0.4em;
+      border-radius: 3px;
+      background: var(--surface2);
+      color: var(--accent);
+      margin-right: 0.35rem;
+      vertical-align: middle;
+    }
   </style>
 </head>
 <body>
@@ -268,23 +479,45 @@
     </div>
   </header>
 
-  <main>
-    <nav class="toc" aria-label="目次">
-      <h2>目次</h2>
-      <ol>
-        <li><a href="#overview">このツールについて</a></li>
-        <li><a href="#install">インストールと起動</a></li>
-        <li><a href="#quickstart">クイックスタート</a></li>
-        <li><a href="#flow">自動化の流れ（①〜⑦）</a></li>
-        <li><a href="#setup">セットアップ</a></li>
-        <li><a href="#gui">GUI の各タブ</a></li>
-        <li><a href="#buttons">ボタン画像の差し替え</a></li>
-        <li><a href="#logs">ログの見方</a></li>
-        <li><a href="#troubleshoot">うまくいかないとき</a></li>
-        <li><a href="#notes">注意事項</a></li>
-      </ol>
-    </nav>
+  <button type="button" class="nav-toggle" id="nav-toggle" aria-controls="sidebar" aria-expanded="false">
+    目次
+  </button>
+  <div class="sidebar-backdrop" id="sidebar-backdrop" hidden></div>
 
+  <div class="page-shell">
+    <aside class="sidebar" id="sidebar" aria-label="ドキュメント目次">
+      <div class="sidebar-inner">
+        <p class="sidebar-title">目次</p>
+        <nav>
+          <ul class="nav-list">
+            <li><a href="#overview">このツールについて</a></li>
+            <li><a href="#install">インストールと起動</a></li>
+            <li><a href="#quickstart">クイックスタート</a></li>
+            <li><a href="#flow">自動化の流れ（①〜⑦）</a></li>
+            <li><a href="#setup">セットアップ</a></li>
+            <li><a href="#gui">GUI の各タブ</a></li>
+            <li><a href="#buttons">ボタン画像の差し替え</a></li>
+            <li><a href="#logs">ログの見方</a></li>
+            <li><a href="#troubleshoot">うまくいかないとき</a></li>
+            <li class="nav-group">
+              <a href="#tuning-patterns">パターン別チューニング</a>
+              <ul class="nav-sub">
+                <li><a href="#symptom-matrix">症状 → 対策マトリクス</a></li>
+                <li><a href="#tune-step1">① サーバー一覧 JOIN</a></li>
+                <li><a href="#tune-step2">② REQUIRED MODS</a></li>
+                <li><a href="#tune-step3">③ ログイン待機</a></li>
+                <li><a href="#tune-recovery">復帰（③-A〜⑦）</a></li>
+                <li><a href="#tune-env">環境・モニター</a></li>
+              </ul>
+            </li>
+            <li><a href="#notes">注意事項</a></li>
+          </ul>
+        </nav>
+      </div>
+    </aside>
+
+    <div class="main-column">
+  <main>
     <section id="overview">
       <h2>このツールについて</h2>
       <p class="lead">
@@ -343,13 +576,15 @@ python gui.py</pre>
         <li>接続したいサーバーの行をクリックして<strong>オレンジ色で選択</strong>します。</li>
         <li>ASA_Login の <strong>「セットアップ」</strong> を押し、<strong>最小モード（推奨）</strong> で ① サーバー一覧を登録します。</li>
         <li>ARK を表示しているモニターを GUI の <strong>「ARK を表示しているモニター」</strong> で選びます。</li>
+        <li><strong>「キャプチャ範囲」</strong> は通常 <strong>「ゲームウィンドウ」</strong>（推奨）のままで問題ありません。</li>
         <li><strong>「開始」</strong> を押し、確認ダイアログの指示どおりの状態であることを確認して実行します。</li>
       </ol>
 
       <div class="card success">
         <strong>最小セットアップのポイント</strong><br>
-        ① サーバー一覧のキャプチャだけで動作します。CANCEL / BACK / MODS JOIN などのボタンは
-        同梱のボタン画像で自動検出するため、<strong>わざとエラー画面を起こしてキャプチャする必要はありません</strong>。
+        ① サーバー一覧のキャプチャだけで、非 MODS サーバーなら基本的に動作します。<br>
+        <strong>画像優先モード</strong>では、CANCEL / BACK 等は同梱ボタン PNG で検出するため、エラー画面をわざと起こす必要はありません。<br>
+        <strong>MODS サーバー</strong>では、② のキャプチャまたは <code>join_mods</code> 座標の登録を推奨します。
       </div>
     </section>
 
@@ -410,7 +645,7 @@ python gui.py</pre>
             <td>⑤</td>
             <td>メインメニュー</td>
             <td><strong>JOIN GAME</strong> カードをクリック</td>
-            <td>④枚 / ⑤枚タイルに対応</td>
+            <td>④枚 / ⑤枚タイル両対応（レイアウト自動判定なし・2 PNG を試行）</td>
           </tr>
           <tr>
             <td>⑥</td>
@@ -432,7 +667,8 @@ python gui.py</pre>
         <img src="setup_samples/04_main_menu_4tiles.png" alt="メインメニュー（4枚タイルレイアウト）" width="960" height="540">
         <figcaption>
           左から2番目のカードが JOIN GAME です（④枚タイルレイアウト）。
-          ⑤枚タイル（中央が JOIN GAME）の場合は <code>join_game_center.png</code> も利用します。
+          ⑤枚タイル（中央が JOIN GAME）の場合も、検出時は <code>join_game.png</code> と <code>join_game_center.png</code> を毎回両方試します（レイアウトの自動判定はありません）。
+          クリック座標は自分のレイアウトの JOIN GAME 位置を「画面で設定」してください。
         </figcaption>
       </figure>
 
@@ -504,12 +740,25 @@ python gui.py</pre>
 
       <h3>最小モード（推奨）</h3>
       <div class="card success">
-        <strong>① サーバー一覧だけ</strong>登録すれば動作します。<br>
-        エラー系のボタンは同梱 PNG で検出するため、CONNECTION FAILED などの画面をわざと起こす必要はありません。
+        <strong>① サーバー一覧だけ</strong>登録すれば、非 MODS サーバーでは動作します。<br>
+        画像優先モードでは、復帰用ボタン（CANCEL / BACK 等）は同梱 PNG で検出します。
       </div>
 
+      <h3>個別モード</h3>
+      <p>必要な画面だけチェックボックスで選んで登録します。② MODS だけ追加したい場合などに使います。</p>
+
       <h3>フルモード</h3>
-      <p>解像度や UI レイアウトが大きく異なる環境向けです。各画面を個別にキャプチャし、精度を上げられます。</p>
+      <p>すべての画面を順に登録します。解像度や UI レイアウトが大きく異なる環境向けです。</p>
+
+      <div class="card">
+        <strong>画像ファイルの役割（3 層）</strong>
+        <ul>
+          <li><code>templates/*.png</code> … セットアップで保存した<strong>正本</strong>（最優先で使用）</li>
+          <li><code>assets/defaults/fallback_screens/</code> … 未登録時の<strong>実行時フォールバック</strong></li>
+          <li><code>docs/setup_samples/</code> … ウィザードの<strong>参考表示のみ</strong>（認識には不使用）</li>
+        </ul>
+        詳細ログの <code>templates_source: fallback</code> は、自分のキャプチャではなく同梱フォールバックを使っている印です。
+      </div>
 
       <table>
         <thead>
@@ -566,10 +815,28 @@ python gui.py</pre>
       <div class="card warn">
         <strong>再セットアップが必要なタイミング</strong>
         <ul>
-          <li>ゲームの解像度や表示モードを変更したとき</li>
+          <li>ゲームの解像度や表示モード（ウィンドウ / フルスクリーン）を変更したとき</li>
+          <li><strong>キャプチャ範囲</strong>（ゲームウィンドウ ↔ モニター全体）を切り替えたとき</li>
           <li>モニターの割り当てを変えたとき</li>
           <li>UI スケールや言語設定を変えたとき</li>
+          <li>セットアップで保存した PNG の色味が実画面と大きく違うとき（古いバージョンで採取した場合など）</li>
         </ul>
+      </div>
+
+      <div class="card">
+        <strong>キャプチャ範囲について</strong>
+        <ul>
+          <li><strong>ゲームウィンドウ（推奨）</strong> … ARK の描画領域（クライアント領域）のみをキャプチャします。ウィンドウモード運用向け。</li>
+          <li><strong>モニター全体</strong> … 選択したモニター全体をキャプチャします。フルスクリーン運用向け。</li>
+        </ul>
+        モード変更後は、座標とテンプレート画像の基準が変わるため、<strong>セットアップの再実行</strong>を推奨します。
+      </div>
+
+      <div class="card warn">
+        <strong>セットアップと設定の保存</strong><br>
+        セットアップ完了時に <code>config.yaml</code> が更新されます。
+        GUI に未保存の変更がある場合は、続行前に確認ダイアログが表示され、
+        <strong>現在のフォーム内容も含めて保存</strong>されます（意図せず設定が消えることはありません）。
       </div>
     </section>
 
@@ -580,7 +847,10 @@ python gui.py</pre>
       <ul>
         <li><strong>注意事項</strong> … 動作前の確認ポイント</li>
         <li><strong>ARK を表示しているモニター</strong> … サブモニター運用時はここで対象を選択</li>
+        <li><strong>キャプチャ範囲</strong> … 「ゲームウィンドウ」（推奨）または「モニター全体」。変更後はセットアップ再実行を推奨</li>
         <li><strong>最大試行回数 / リトライ間隔</strong> … 失敗時の繰り返し設定</li>
+        <li><strong>設定を保存</strong> … フォーム内容を <code>config.yaml</code> に書き込み</li>
+        <li><strong>初期値に戻す</strong> … <code>config.example.yaml</code> の初期値に戻して保存（<code>templates/</code> の画像は削除されません）</li>
       </ul>
 
       <h3><span class="badge">待ち時間</span> 場面ごとの待機</h3>
@@ -592,6 +862,7 @@ python gui.py</pre>
         <tbody>
           <tr><td>開始までの待ち</td><td>「開始」押下後、実際の操作を始めるまでの秒数</td></tr>
           <tr><td>画面チェック間隔</td><td>ボタン・画面状態を確認する間隔（短いほど反応は早い）</td></tr>
+          <tr><td>クリック前の安定確認回数</td><td>クリック前に同じ判定を連続何回満たすまで待つか（<strong>2 推奨</strong>。早押し防止）</td></tr>
           <tr><td>クリック前 / 後の待ち</td><td>ボタン検出からクリックまで、およびクリック後の安定待ち</td></tr>
           <tr><td>② MODS 画面の確認時間</td><td>① JOIN 後、MODS が出るかどうか見る時間</td></tr>
           <tr><td>③ ログイン結果の待ち</td><td>成功・失敗・動画のいずれかが出るまでの上限</td></tr>
@@ -604,6 +875,7 @@ python gui.py</pre>
         <li><strong>画面判定の一致度</strong> … サーバー一覧やメインメニューなど全体画面の判定</li>
         <li><strong>ボタン判定の一致度</strong> … JOIN / CANCEL などボタン画像の判定</li>
         <li><strong>② MODS 画面の一致度</strong> … MODS の出現判定（低めの値がデフォルト）</li>
+        <li><strong>② MODS 画面の検出</strong> … 検出方式（ハイブリッド推奨）と画面比較範囲（中央モーダル推奨）</li>
         <li><strong>ARK ウィンドウのタイトル</strong> … 通常は変更不要</li>
         <li><strong>操作前に ARK を前面に出す</strong> … サブモニター運用ではオン推奨</li>
       </ul>
@@ -611,6 +883,7 @@ python gui.py</pre>
 
       <h3><span class="badge">クリック座標</span> ％座標とクリック方式</h3>
       <p>左上 (0, 0)、右下 (100, 100) のパーセント座標で各ボタンの位置を指定します。セットアップで登録した値もここに反映されます。</p>
+      <p>各行の <strong>「画面で設定」</strong> から、モニター上をクリックして座標を登録できます（キャプチャ範囲の基準に従います）。</p>
 
       <table>
         <thead>
@@ -631,7 +904,7 @@ python gui.py</pre>
           </tr>
           <tr>
             <td>座標のみ</td>
-            <td>クリックはすべて座標。画像認識は画面遷移の判定のみに使用</td>
+            <td>クリックはすべて座標。到達判定は画面テンプレート＋ボタン PNG（② は <code>mods_detect_mode: hybrid</code> 推奨）。③-A / ④ / ⑤ / ⑥ も画面未登録時はボタン PNG で検出可（⑤ は <code>join_game</code> / <code>join_game_center</code> を両方試行）</td>
           </tr>
         </tbody>
       </table>
@@ -673,8 +946,8 @@ python gui.py</pre>
 
       <div class="card warn">
         初回コピー後は既存ファイルを上書きしません。古い PNG が残っている場合は手動で差し替えてください。
-        ⑤枚タイルレイアウトで JOIN GAME が押せない場合は <code>join_game_center.png</code> を
-        ご自身の画面から切り出して差し替えてください。
+        ⑤ の JOIN GAME 検出は <code>join_game.png</code> と <code>join_game_center.png</code> を毎回両方試します（④枚 / ⑤枚タイルの自動判定はありません）。
+        どちらも自分の画面に合わない場合は、該当 PNG を切り出して差し替え、あわせて <code>ui.join_game</code> 座標も再設定してください。
       </div>
     </section>
 
@@ -703,38 +976,481 @@ python gui.py</pre>
           </tr>
         </tbody>
       </table>
-      <p>問題が起きたときは、まず「ログ」タブで止まっている段階を確認し、必要なら「詳細ログ」で一致度を調べてください。</p>
+      <p>問題が起きたときは、まず「ログ」タブで止まっている段階を確認し、必要なら「詳細ログ」で一致度を調べてください。実行開始時には<strong>設定値と解決済みパス</strong>（<code>templates_resolved</code> 等）が詳細ログに出力されます。</p>
+      <p class="matrix-note">古い <code>config.yaml</code> で <code>logging.file</code> のみ指定している場合、詳細ログはそのパス（例: <code>logs/asa_login.log</code>）に出力されます。新形式は <code>user_file</code> / <code>detail_file</code> です。</p>
+
+      <h3>詳細ログで見るべきキーワード</h3>
+      <table>
+        <thead>
+          <tr><th>ログの例</th><th>意味</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>類似度: 0.xx</code></td><td>画面またはボタン画像の一致度。閾値と比較して調整の参考に</td></tr>
+          <tr><td><code>2回連続</code></td><td>安定確認回数を満たしてクリックした印</td></tr>
+          <tr><td><code>未検出 / タイムアウト</code></td><td>一致度不足、待ち時間不足、テンプレート不一致の可能性</td></tr>
+          <tr><td><code>templates_source</code></td><td><code>user</code> / <code>fallback</code> / <code>missing</code> — どの画像を参照しているか</td></tr>
+          <tr><td><code>join_mods ボタン最高</code></td><td>② MODS のボタン検出類似度（ハイブリッド / ボタンのみ時）</td></tr>
+          <tr><td><code>mods_detect_mode</code></td><td>② の検出方式（hybrid / screen / button）</td></tr>
+          <tr><td><code>capture_region</code></td><td>実際にキャプチャしている領域（ウィンドウ基準か確認）</td></tr>
+        </tbody>
+      </table>
     </section>
 
     <section id="troubleshoot">
       <h2>うまくいかないとき</h2>
+      <p class="lead">
+        症状から段階（①〜⑦）を特定し、<a href="#symptom-matrix">症状 → 対策マトリクス</a>を参照してください。
+        多くの場合、<strong>セットアップ再実行</strong>・<strong>一致度調整</strong>・<strong>待ち時間調整</strong>のいずれかで改善します。
+      </p>
 
-      <h3>ボタンを押せない・押す位置がずれる</h3>
-      <ul>
-        <li>「画像認識」タブでボタン判定の一致度を調整する</li>
-        <li>「クリック座標」タブで座標を微調整、または「座標プレビュー」で確認する</li>
-        <li><code>templates/buttons/</code> の PNG を自分の画面から切り出して差し替える</li>
-        <li>解像度変更後はセットアップをやり直す</li>
-      </ul>
+      <div class="card">
+        <strong>最初に確認すること（共通）</strong>
+        <ol>
+          <li>サーバー行が<strong>オレンジ色</strong>で選択されているか</li>
+          <li>「ログ」タブで<strong>どの段階で止まったか</strong>（① JOIN / ② MODS / ③ 待機 / 復帰 など）</li>
+          <li>「詳細ログ」で<strong>類似度</strong>が閾値より高いか低いか</li>
+          <li><strong>キャプチャ範囲</strong>（ゲームウィンドウ / モニター全体）が運用と一致しているか</li>
+          <li>解像度・表示モード・モニター変更後は<strong>セットアップ再実行</strong>済みか</li>
+          <li>詳細ログの <code>templates_source</code> に <code>fallback</code> / <code>missing</code> がないか（あればセットアップ追加を検討）</li>
+        </ol>
+      </div>
 
-      <h3>画面の判定が合わない</h3>
-      <ul>
-        <li>セットアップで ①（必要なら他画面も）を再キャプチャする</li>
-        <li>画面判定の一致度を下げる（ただし誤判定も増えやすい）</li>
-      </ul>
+      <div class="card warn">
+        <strong>座標のみモードで開始に必要な座標</strong>
+        <ul>
+          <li>必須: ① JOIN / ③-A CANCEL / ④ BACK / ⑤ JOIN GAME / ⑥ ACCEPT</li>
+          <li>MODS サーバー: ② MODS JOIN 座標も登録（未登録だと② をスキップ）</li>
+          <li>画面キャプチャ（<code>templates/*.png</code>）は ① 必須。他は未登録でもボタン PNG 検出で補える場合あり</li>
+        </ul>
+      </div>
 
-      <h3>サブモニターで動かない</h3>
-      <ul>
-        <li>「ARK を表示しているモニター」が正しいか確認する</li>
-        <li>「操作前に ARK を前面に出す」をオンにする</li>
-        <li>ARK が他ウィンドウに隠れていないか確認する</li>
-      </ul>
+      <h3>症状から段階を特定する</h3>
+      <table>
+        <thead>
+          <tr><th>ログ・症状</th><th>疑う段階</th><th>参照</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>「サーバー一覧の準備ができていません」</td><td>① 開始前</td><td><a href="#tune-step1">①</a></td></tr>
+          <tr><td>JOIN を押さない / 別の場所をクリック</td><td>①</td><td><a href="#tune-step1">①</a></td></tr>
+          <tr><td>MODS で失敗 / ② をスキップ / MODS が閉じない</td><td>②</td><td><a href="#tune-step2">②</a></td></tr>
+          <tr><td>③ で長時間待つ / 停滞リトライ</td><td>③</td><td><a href="#tune-step3">③</a></td></tr>
+          <tr><td>CONNECTION FAILED から復帰しない</td><td>③-A → ④ → ⑤</td><td><a href="#tune-recovery">復帰</a></td></tr>
+          <tr><td>NETWORK FAILURE から復帰しない</td><td>⑥ → ⑦ → ⑤</td><td><a href="#tune-recovery">復帰</a></td></tr>
+          <tr><td>ARK ウィンドウが見つかりません</td><td>環境</td><td><a href="#tune-env">環境</a></td></tr>
+        </tbody>
+      </table>
 
-      <h3>③ で長く待たされる</h3>
-      <ul>
-        <li>「待ち時間」タブのログイン結果待ち・動画待ちを確認する</li>
-        <li>ログイン動画が流れるサーバーでは時間がかかることがあります</li>
-      </ul>
+      <h3>一致度調整の基本ルール</h3>
+      <div class="card success">
+        <ul>
+          <li><strong>見逃しが多い</strong>（ボタン/画面が見つからない）→ 一致度を<strong>下げる</strong></li>
+          <li><strong>誤クリック・早押し・別画面判定</strong> → 一致度を<strong>上げる</strong>、または<strong>安定確認回数を 3</strong> に</li>
+          <li>一度に大きく変えず、<strong>0.02〜0.05 刻み</strong>で試す</li>
+          <li>変更後は「設定を保存」→ 再試行</li>
+        </ul>
+      </div>
+
+      <h3>クリック方式別の方針</h3>
+      <table>
+        <thead>
+          <tr><th>方式</th><th>うまくいかないときの対処</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>画像優先</strong>（既定）</td>
+            <td>ボタン PNG 差し替え → 一致度 → 座標フォールバックの微調整</td>
+          </tr>
+          <tr>
+            <td><strong>座標のみ</strong></td>
+            <td>② 検出方式<strong>ハイブリッド</strong>・比較範囲<strong>中央モーダル</strong> → 必須座標を「画面で設定」→ 未登録画面は <code>templates/buttons/</code> の PNG 差し替えも有効</td>
+          </tr>
+          <tr>
+            <td><strong>座標優先</strong></td>
+            <td>座標を優先しつつ、待機判定に画像を使用。うまくいかない場合は座標の再設定または一致度調整</td>
+          </tr>
+          <tr>
+            <td><strong>画像のみ</strong></td>
+            <td>ボタン PNG の精度が必須。座標では救えない</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="tuning-patterns">
+      <h2>パターン別チューニング</h2>
+      <p>
+        下の<strong>症状 → 対策マトリクス</strong>で該当行を探し、<span class="priority">1</span> から順に試してください。
+        複数症状がある場合は、ログで止まっている段階（①〜⑦）の表を優先します。
+      </p>
+
+      <h3 id="symptom-matrix">症状 → 対策マトリクス（一覧）</h3>
+      <table class="symptom-matrix">
+        <thead>
+          <tr>
+            <th>症状</th>
+            <th>段階</th>
+            <th>対策（優先順）</th>
+            <th>GUI / 設定</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>「サーバー一覧の準備ができていません」</td>
+            <td>① 開始前</td>
+            <td>
+              <span class="priority">1</span>サーバー行をオレンジ選択<br>
+              <span class="priority">2</span>セットアップで <code>server_list.png</code> 再キャプチャ<br>
+              <span class="priority">3</span>画面判定の一致度を下げる（0.02 刻み）
+            </td>
+            <td>セットアップ / 画像認識</td>
+          </tr>
+          <tr>
+            <td>JOIN を押さない</td>
+            <td>①</td>
+            <td>
+              <span class="priority">1</span>① JOIN 座標を「画面で設定」<br>
+              <span class="priority">2</span><code>server_list.png</code> 再キャプチャ<br>
+              <span class="priority">3</span>ボタン一致度を下げる / <code>join_server_list.png</code> 差し替え
+            </td>
+            <td>クリック座標 / セットアップ / 画像認識</td>
+          </tr>
+          <tr>
+            <td>別の場所をクリック（①）</td>
+            <td>①</td>
+            <td>
+              <span class="priority">1</span>① JOIN 座標を再設定 → 座標プレビュー確認<br>
+              <span class="priority">2</span>ボタン一致度を<strong>上げる</strong>（誤検出抑制）<br>
+              <span class="priority">3</span>安定確認回数を 3 に
+            </td>
+            <td>クリック座標 / 画像認識 / 待ち時間</td>
+          </tr>
+          <tr>
+            <td>② をスキップ（MODS が出ているのに）</td>
+            <td>②</td>
+            <td>
+              <span class="priority">1</span>検出方式を<strong>ハイブリッド</strong>（既定）に<br>
+              <span class="priority">2</span>② MODS JOIN 座標を登録<br>
+              <span class="priority">3</span>セットアップ②で <code>required_mods.png</code> 登録<br>
+              <span class="priority">4</span>MODS 一致度を下げる / 確認時間を 10 秒以上に
+            </td>
+            <td>画像認識 / クリック座標 / セットアップ / 待ち時間</td>
+          </tr>
+          <tr>
+            <td>MODS が出るのに JOIN しない</td>
+            <td>②</td>
+            <td>
+              <span class="priority">1</span>② MODS JOIN 座標を「画面で設定」<br>
+              <span class="priority">2</span>検出方式: ハイブリッド、比較範囲: 中央モーダル<br>
+              <span class="priority">3</span><code>join_mods.png</code> 差し替え + ボタン一致度調整
+            </td>
+            <td>クリック座標 / 画像認識 / templates/buttons</td>
+          </tr>
+          <tr>
+            <td>画面切替前にクリック（②）</td>
+            <td>②</td>
+            <td>
+              <span class="priority">1</span>安定確認回数を 3 に<br>
+              <span class="priority">2</span>MODS 一致度を<strong>上げる</strong><br>
+              <span class="priority">3</span>クリック後の待ちを 2.5〜3 秒に
+            </td>
+            <td>待ち時間 / 画像認識</td>
+          </tr>
+          <tr>
+            <td>MODS が閉じない</td>
+            <td>②</td>
+            <td>
+              <span class="priority">1</span>② JOIN 座標がモーダル左下か確認<br>
+              <span class="priority">2</span>クリック後の待ちを延長<br>
+              <span class="priority">3</span>① の JOIN（右下）と取り違えていないか座標・ボタン PNG を確認
+            </td>
+            <td>クリック座標 / 待ち時間</td>
+          </tr>
+          <tr>
+            <td>成功なのにタイムアウト</td>
+            <td>③</td>
+            <td>
+              <span class="priority">1</span>③ ログイン結果の待ちを延長<br>
+              <span class="priority">2</span>ログイン動画の追加待ちを延長<br>
+              <span class="priority">3</span><code>in_game.png</code> をセットアップ登録
+            </td>
+            <td>待ち時間 / セットアップ</td>
+          </tr>
+          <tr>
+            <td>「サーバー一覧のまま停滞」</td>
+            <td>③</td>
+            <td>
+              <span class="priority">1</span>③ 停滞とみなす時間を調整（短→早リトライ、長→待ち増）<br>
+              <span class="priority">2</span>② がスキップされていないか確認（上表参照）<br>
+              <span class="priority">3</span>画面判定の一致度を上げる（誤って①と判定）
+            </td>
+            <td>待ち時間 / 画像認識</td>
+          </tr>
+          <tr>
+            <td>CONNECTION FAILED から戻れない</td>
+            <td>③-A→④→⑤</td>
+            <td>
+              <span class="priority">1</span>失敗後の画面復帰待ちを 60 秒程度に<br>
+              <span class="priority">2</span>CANCEL / BACK / JOIN GAME 座標を「画面で設定」<br>
+              <span class="priority">3</span>座標のみ: <code>cancel_failed.png</code> 等のボタン PNG 差し替え<br>
+              <span class="priority">4</span>画面テンプレートをフルセットアップで登録（精度向上）
+            </td>
+            <td>待ち時間 / クリック座標 / templates/buttons / セットアップ</td>
+          </tr>
+          <tr>
+            <td>BACK や JOIN GAME が押せない</td>
+            <td>④ / ⑤</td>
+            <td>
+              <span class="priority">1</span>座標を「画面で設定」（自分のレイアウトの JOIN GAME 位置）<br>
+              <span class="priority">2</span><code>join_game.png</code> / <code>join_game_center.png</code> を差し替え（検出は両方試行）<br>
+              <span class="priority">3</span>ボタン一致度を下げる / ⑤ <code>main_menu.png</code> をセットアップ登録
+            </td>
+            <td>クリック座標 / templates/buttons / 画像認識</td>
+          </tr>
+          <tr>
+            <td>NETWORK FAILURE から戻れない</td>
+            <td>⑥→⑦→⑤</td>
+            <td>
+              <span class="priority">1</span>ACCEPT 座標を登録（座標のみでは必須）<br>
+              <span class="priority">2</span><code>accept_network_failure.png</code> 差し替え<br>
+              <span class="priority">3</span><code>network_failure.png</code> をセットアップ登録<br>
+              <span class="priority">4</span>失敗後の画面復帰待ちを延長
+            </td>
+            <td>クリック座標 / templates/buttons / セットアップ / 待ち時間</td>
+          </tr>
+          <tr>
+            <td>ARK ウィンドウが見つかりません</td>
+            <td>環境</td>
+            <td>
+              <span class="priority">1</span>ウィンドウタイトル文字列を確認<br>
+              <span class="priority">2</span>キャプチャ範囲（ウィンドウ / モニター）と運用を一致<br>
+              <span class="priority">3</span>セットアップ再実行
+            </td>
+            <td>画像認識 / メイン</td>
+          </tr>
+          <tr>
+            <td>座標が全体的にズレる</td>
+            <td>環境</td>
+            <td>
+              <span class="priority">1</span>解像度・表示倍率変更 → セットアップ再実行<br>
+              <span class="priority">2</span>キャプチャ範囲変更 → セットアップ再実行<br>
+              <span class="priority">3</span>モニター選択・「前面に出す」を確認
+            </td>
+            <td>セットアップ / メイン / 画像認識</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="matrix-note">詳細ログの <code>類似度: 0.xx / 閾値: 0.xx</code> が閾値未満なら「見逃し」→ 一致度を下げる。閾値以上なのに誤動作なら「早押し・誤判定」→ 一致度を上げるか安定確認回数を 3 に。</p>
+
+      <h3>段階別の詳細（症状 → 対策）</h3>
+      <p>マトリクスで段階が特定できたら、以下の表で個別症状ごとの対策を確認できます。</p>
+
+      <article id="tune-step1" class="tune-card">
+        <h4><span class="badge">①</span> サーバー一覧 JOIN</h4>
+        <table class="symptom-matrix">
+          <thead>
+            <tr><th>症状</th><th>対策</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>準備ができていません</td>
+              <td>サーバー行をオレンジ選択 → <code>server_list.png</code> 再キャプチャ → 画面判定一致度を下げる（0.70〜0.72 目安）</td>
+            </tr>
+            <tr>
+              <td>JOIN を押さない</td>
+              <td>① JOIN 座標を「画面で設定」→ 座標プレビュー確認 → 画像優先なら <code>join_server_list.png</code> 差し替え</td>
+            </tr>
+            <tr>
+              <td>ずれた位置をクリック</td>
+              <td>① JOIN 座標を再設定 → ボタン一致度を<strong>上げる</strong> → 安定確認回数 3</td>
+            </tr>
+            <tr>
+              <td>復帰後に①と認識されない</td>
+              <td>① 復帰判定のゆるさを 0.07〜0.10 に上げる → <code>server_list.png</code> 再キャプチャ</td>
+            </tr>
+          </tbody>
+        </table>
+        <p class="matrix-note">詳細ログ: <code>server_list … 類似度: 0.xx</code></p>
+      </article>
+
+      <article id="tune-step2" class="tune-card">
+        <h4><span class="badge">②</span> REQUIRED MODS</h4>
+        <table class="symptom-matrix">
+          <thead>
+            <tr><th>症状</th><th>対策</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>② をスキップ</td>
+              <td>「② MODS 画面の検出」→ 方式<strong>ハイブリッド</strong>・範囲<strong>中央モーダル</strong> → ② JOIN 座標登録 → セットアップ②で <code>required_mods.png</code> 登録 → MODS 一致度を下げる（0.48〜0.52）</td>
+            </tr>
+            <tr>
+              <td>MODS なのに JOIN しない</td>
+              <td>② MODS JOIN 座標を「画面で設定」→ <code>join_mods.png</code> 差し替え → ボタン一致度調整</td>
+            </tr>
+            <tr>
+              <td>画面切替前にクリック</td>
+              <td>安定確認回数 3 → MODS 一致度を<strong>上げる</strong>（0.58〜0.65）→ クリック後の待ち 2.5〜3 秒</td>
+            </tr>
+            <tr>
+              <td>MODS が閉じない</td>
+              <td>② JOIN がモーダル左下か確認（① 右下 JOIN と混同しない）→ クリック後の待ち延長</td>
+            </tr>
+            <tr>
+              <td>表示が遅くて見逃す</td>
+              <td>② MODS 画面の確認時間を 10〜15 秒に延長</td>
+            </tr>
+          </tbody>
+        </table>
+        <p class="matrix-note">
+          詳細ログ: <code>MODS 画面が安定しませんでした</code> → 検出方式・一致度・テンプレート未登録（fallback 警告）を確認。
+          座標のみモードでも<strong>検出</strong>はハイブリッド推奨（クリックは座標のまま）。
+        </p>
+      </article>
+
+      <article id="tune-step3" class="tune-card">
+        <h4><span class="badge">③</span> ログイン待機</h4>
+        <table class="symptom-matrix">
+          <thead>
+            <tr><th>症状</th><th>対策</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>成功なのにタイムアウト</td>
+              <td>③ ログイン結果の待ち・ログイン動画の追加待ちを延長 → <code>in_game.png</code> 登録</td>
+            </tr>
+            <tr>
+              <td>長時間待ち（正常系）</td>
+              <td>ログイン動画サーバーは時間がかかるのが正常 → 待ち時間のみ延長（操作不要な場合あり）</td>
+            </tr>
+            <tr>
+              <td>サーバー一覧のまま停滞</td>
+              <td>③ 停滞とみなす時間を調整 → ② スキップの有無を確認 → 画面判定一致度を上げる</td>
+            </tr>
+          </tbody>
+        </table>
+        <p class="matrix-note">③ はクリック操作なし。待ち時間と成功画面テンプレートが中心。</p>
+      </article>
+
+      <article id="tune-recovery" class="tune-card">
+        <h4><span class="badge">復帰</span> ③-A / ④ / ⑤ / ⑥ / ⑦</h4>
+        <table class="symptom-matrix">
+          <thead>
+            <tr><th>症状</th><th>対策</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>CONNECTION FAILED 後に戻れない</td>
+              <td>失敗後の画面復帰待ち 60 秒程度 → CANCEL 座標登録 → <code>cancel_failed.png</code> 差し替え → <code>connection_failed.png</code> 登録</td>
+            </tr>
+            <tr>
+              <td>BACK が押せない</td>
+              <td>④ BACK 座標を「画面で設定」→ <code>back_empty_list.png</code> 差し替え（<code>server_list_empty.png</code> 未登録でもボタン PNG で検出可）</td>
+            </tr>
+            <tr>
+              <td>JOIN GAME が押せない</td>
+              <td>⑤ JOIN GAME 座標再設定（自分のレイアウトの位置）→ <code>join_game.png</code> / <code>join_game_center.png</code> 差し替え（検出は両方試行）→ <code>main_menu.png</code> 登録</td>
+            </tr>
+            <tr>
+              <td>NETWORK FAILURE 復帰失敗</td>
+              <td>ACCEPT 座標必須（座標のみ）→ <code>accept_network_failure.png</code> 差し替え → <code>network_failure.png</code> 登録 → 復帰待ち延長</td>
+            </tr>
+            <tr>
+              <td>復帰は進むが途中で止まる</td>
+              <td>次の画面・ボタンの出現待ちを 30〜45 秒に → 安定確認回数 2〜3 → クリック後の待ちを長めに</td>
+            </tr>
+          </tbody>
+        </table>
+        <p class="matrix-note">詳細ログ: <code>③-A → ④ → ⑤ → ① の復帰</code> / <code>リカバリー完了</code> まで出るか</p>
+      </article>
+
+      <article id="tune-env" class="tune-card">
+        <h4><span class="badge">環境</span> ウィンドウ・モニター・表示倍率</h4>
+        <table class="symptom-matrix">
+          <thead>
+            <tr><th>症状</th><th>対策</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>ウィンドウ未検出</td>
+              <td>ARK ウィンドウタイトル文字列を確認 → ゲームを起動・前面表示 → キャプチャ範囲と運用を一致</td>
+            </tr>
+            <tr>
+              <td>サブモニターでずれる</td>
+              <td>ARK モニター選択を確認 → 「操作前に ARK を前面に出す」をオン → セットアップ再実行</td>
+            </tr>
+            <tr>
+              <td>座標が全体的にズレる</td>
+              <td>解像度・表示倍率・キャプチャ範囲変更 → 必ずセットアップ再実行 → 全座標を「画面で設定」</td>
+            </tr>
+            <tr>
+              <td>色味が合わない / 類似度が異常に低い</td>
+              <td>古い <code>templates/*.png</code> を再キャプチャ（setup_capture_version 警告時）</td>
+            </tr>
+          </tbody>
+        </table>
+      </article>
+
+      <h3>待ち時間の調整目安（読み込みが遅い PC）</h3>
+      <table>
+        <thead>
+          <tr><th>項目</th><th>既定付近</th><th>遅い PC の目安</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>クリック後の待ち</td><td>2.0 秒</td><td>2.5〜3.5 秒</td></tr>
+          <tr><td>次の画面・ボタンの出現待ち</td><td>20 秒</td><td>30〜45 秒</td></tr>
+          <tr><td>② MODS 画面の確認時間</td><td>8 秒</td><td>10〜15 秒</td></tr>
+          <tr><td>失敗後の画面復帰待ち</td><td>45 秒</td><td>60〜90 秒</td></tr>
+          <tr><td>クリック前の安定確認回数</td><td>2</td><td>早押し時 3 / 反応重視 1</td></tr>
+        </tbody>
+      </table>
+
+      <h3>② MODS 検出の設定（画像認識タブ）</h3>
+      <table>
+        <thead>
+          <tr><th>設定</th><th>推奨</th><th>症状別の変更</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>検出方式</td>
+            <td>ハイブリッド</td>
+            <td>② スキップ → ハイブリッドのまま。誤検出のみ → 画面テンプレートのみ</td>
+          </tr>
+          <tr>
+            <td>画面比較範囲</td>
+            <td>中央モーダル</td>
+            <td>背景一覧差で類似度が低い → 中央モーダル。全体一致を試したい → 画面全体</td>
+          </tr>
+          <tr>
+            <td>② MODS 画面の一致度</td>
+            <td>0.55</td>
+            <td>見逃し → 0.48〜0.52 / 早押し → 0.58〜0.65</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>一致度の調整目安</h3>
+      <table>
+        <thead>
+          <tr><th>項目</th><th>既定</th><th>見逃し時</th><th>誤判定・早押し時</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>画面判定</td><td>0.75</td><td>0.70〜0.72</td><td>0.78〜0.82</td></tr>
+          <tr><td>ボタン判定</td><td>0.75</td><td>0.68〜0.72</td><td>0.78〜0.85</td></tr>
+          <tr><td>② MODS 画面</td><td>0.55</td><td>0.48〜0.52</td><td>0.58〜0.65</td></tr>
+          <tr><td>① 復帰判定のゆるさ</td><td>0.05</td><td>0.07〜0.10</td><td>0.02〜0.03</td></tr>
+        </tbody>
+      </table>
+
+      <div class="card warn">
+        <strong>それでも改善しない場合</strong>
+        <ul>
+          <li><code>logs/asa_login_detail.log</code>（または <code>logging.file</code>）の実行開始ブロックと、止まった直前の類似度を保存して原因切り分け</li>
+          <li>GUI「設定を保存」で <code>config.yaml</code> の幽霊テンプレートパス（ファイル不在の参照）を整理</li>
+          <li>フルまたは個別セットアップで、問題の画面テンプレートを自分の環境で再キャプチャ</li>
+          <li>一時的に<strong>座標のみ</strong>モード + 全必須座標を「画面で設定」で精度を上げる</li>
+          <li>「初期値に戻す」で設定だけリセットし、<code>templates/</code> を残したままセットアップからやり直す</li>
+        </ul>
+      </div>
 
       <h3>設定をファイルで編集したい</h3>
       <p><code>config.yaml</code> をテキストエディタで編集できます。雛形は <code>config.example.yaml</code> を参照してください。GUI で「設定を保存」を押すとファイルに書き戻されます。</p>
@@ -759,5 +1475,74 @@ python gui.py</pre>
       ASA_Login — MIT License
     </div>
   </footer>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      var toggle = document.getElementById("nav-toggle");
+      var sidebar = document.getElementById("sidebar");
+      var backdrop = document.getElementById("sidebar-backdrop");
+      var links = Array.prototype.slice.call(document.querySelectorAll(".sidebar a[href^='#']"));
+
+      function setSidebarOpen(open) {
+        sidebar.classList.toggle("open", open);
+        backdrop.classList.toggle("visible", open);
+        backdrop.hidden = !open;
+        document.body.classList.toggle("sidebar-open", open);
+        toggle.setAttribute("aria-expanded", open ? "true" : "false");
+        toggle.textContent = open ? "閉じる" : "目次";
+      }
+
+      toggle.addEventListener("click", function () {
+        setSidebarOpen(!sidebar.classList.contains("open"));
+      });
+
+      backdrop.addEventListener("click", function () {
+        setSidebarOpen(false);
+      });
+
+      links.forEach(function (link) {
+        link.addEventListener("click", function () {
+          if (window.matchMedia("(max-width: 1023px)").matches) {
+            setSidebarOpen(false);
+          }
+        });
+      });
+
+      window.addEventListener("keydown", function (event) {
+        if (event.key === "Escape") {
+          setSidebarOpen(false);
+        }
+      });
+
+      var sectionIds = links
+        .map(function (link) { return link.getAttribute("href").slice(1); })
+        .filter(function (id, index, array) { return array.indexOf(id) === index; });
+
+      var sections = sectionIds
+        .map(function (id) { return document.getElementById(id); })
+        .filter(Boolean)
+        .sort(function (a, b) { return a.offsetTop - b.offsetTop; });
+
+      function updateActiveLink() {
+        var current = sections[0] ? sections[0].id : "";
+        var marker = window.scrollY + window.innerHeight * 0.25;
+        sections.forEach(function (section) {
+          if (section.offsetTop <= marker) {
+            current = section.id;
+          }
+        });
+        links.forEach(function (link) {
+          var active = link.getAttribute("href") === "#" + current;
+          link.classList.toggle("active", active);
+        });
+      }
+
+      window.addEventListener("scroll", updateActiveLink, { passive: true });
+      window.addEventListener("resize", updateActiveLink);
+      updateActiveLink();
+    })();
+  </script>
 </body>
 </html>

@@ -10,6 +10,7 @@ import yaml
 
 from .paths import app_root, bundle_root, ensure_app_dirs
 from .button_templates import ButtonConfig
+from .capture import CaptureSettings, DEFAULT_CAPTURE_MODE
 from .default_assets import ensure_default_assets
 from .login_flow import LoginAutomator, LoginState, RetryConfig, TemplateConfig
 from .ui_positions import UiPositions
@@ -84,6 +85,12 @@ RETRY_TIMING_FIELDS: tuple[SettingField, ...] = (
         "画面チェック間隔",
         "ボタンや画面の状態を何秒ごとに確認するか（短いほど反応は早い）",
         0.5, 0.1, 5.0, 0.1, "全体",
+    ),
+    SettingField(
+        "screen_stable_polls",
+        "クリック前の安定確認回数",
+        "クリック前に同じ画面/ボタン判定を連続何回満たすまで待つか（2推奨・1で従来並み）",
+        2, 1, 5, 1, "全体", "int",
     ),
     SettingField(
         "transition_settle",
@@ -171,12 +178,32 @@ MATCHING_FIELDS: tuple[SettingField, ...] = (
 CLICK_MODE_OPTIONS: tuple[tuple[str, str], ...] = (
     ("image", "画像優先（見つかったら画像の位置をクリック）"),
     ("image_only", "画像のみ（座標フォールバックなし）"),
-    ("coordinates", "座標優先（画像が見つからなければ登録座標）"),
-    ("coordinates_only", "座標のみ（画像は画面判定のみ・クリックはすべて座標）"),
+    ("coordinates", "座標優先（登録座標をクリック・未設定時は画像）"),
+    ("coordinates_only", "座標のみ（クリックは座標・到達判定は画面＋ボタン PNG）"),
 )
 
 CLICK_MODE_LABEL_TO_VALUE = {label: value for value, label in CLICK_MODE_OPTIONS}
 CLICK_MODE_VALUE_TO_LABEL = {value: label for value, label in CLICK_MODE_OPTIONS}
+
+MODS_DETECT_MODE_OPTIONS: tuple[tuple[str, str], ...] = (
+    ("hybrid", "ハイブリッド（推奨）… 画面＋ボタン"),
+    ("screen", "画面テンプレートのみ"),
+    ("button", "ボタン画像のみ"),
+)
+
+MODS_DETECT_MODE_LABEL_TO_VALUE = {label: value for value, label in MODS_DETECT_MODE_OPTIONS}
+MODS_DETECT_MODE_VALUE_TO_LABEL = {value: label for value, label in MODS_DETECT_MODE_OPTIONS}
+
+MODS_SCREEN_REGION_OPTIONS: tuple[tuple[str, str], ...] = (
+    ("center", "中央モーダル（推奨）… 背景の一覧差を無視"),
+    ("full", "画面全体"),
+)
+
+MODS_SCREEN_REGION_LABEL_TO_VALUE = {label: value for value, label in MODS_SCREEN_REGION_OPTIONS}
+MODS_SCREEN_REGION_VALUE_TO_LABEL = {value: label for value, label in MODS_SCREEN_REGION_OPTIONS}
+
+VALID_MODS_DETECT_MODES = frozenset(value for value, _label in MODS_DETECT_MODE_OPTIONS)
+VALID_MODS_SCREEN_REGIONS = frozenset(value for value, _label in MODS_SCREEN_REGION_OPTIONS)
 
 
 def ensure_config_exists() -> Path:
@@ -198,10 +225,53 @@ def load_config(config_path: str | Path | None = None) -> dict:
         return yaml.safe_load(f) or {}
 
 
+def load_default_config() -> dict:
+    """config.example.yaml の内容を返す（設定の初期値）"""
+    for example in (EXAMPLE_CONFIG_PATH, BUNDLED_EXAMPLE_CONFIG_PATH):
+        if example.exists():
+            with open(example, encoding="utf-8") as f:
+                return yaml.safe_load(f) or {}
+    raise FileNotFoundError("config.example.yaml が見つかりません")
+
+
 def save_config(config: dict, config_path: str | Path | None = None) -> None:
+    from .default_assets import prune_stale_template_paths
+
+    prune_stale_template_paths(config)
     path = Path(config_path) if config_path else CONFIG_PATH
     with open(path, "w", encoding="utf-8") as f:
         yaml.dump(config, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+
+
+CAPTURE_MODE_OPTIONS: tuple[tuple[str, str], ...] = (
+    ("window", "ゲームウィンドウ（推奨）"),
+    ("monitor", "モニター全体"),
+)
+
+CAPTURE_MODE_LABEL_TO_VALUE = {label: value for value, label in CAPTURE_MODE_OPTIONS}
+CAPTURE_MODE_VALUE_TO_LABEL = {value: label for value, label in CAPTURE_MODE_OPTIONS}
+
+
+def _normalize_mods_detect_mode(value: str | None) -> str:
+    if value in VALID_MODS_DETECT_MODES:
+        return value
+    return "hybrid"
+
+
+def _normalize_mods_screen_region(value: str | None) -> str:
+    if value in VALID_MODS_SCREEN_REGIONS:
+        return value
+    return "center"
+
+
+def build_capture_settings(config: dict) -> CaptureSettings:
+    display = config.get("display", {})
+    window = config.get("window", {})
+    return CaptureSettings(
+        mode=display.get("capture_mode", DEFAULT_CAPTURE_MODE),
+        monitor_index=int(display.get("monitor_index", 1)),
+        window_title=window.get("title_contains", "ARK: Survival Ascended"),
+    )
 
 
 def apply_ui_overrides(
@@ -210,6 +280,7 @@ def apply_ui_overrides(
     max_attempts: int | None = None,
     delay_seconds: float | None = None,
     monitor_index: int | None = None,
+    capture_mode: str | None = None,
     retry_timing: dict[str, float | int] | None = None,
     matching_overrides: dict[str, float | str] | None = None,
     window_overrides: dict[str, str | bool] | None = None,
@@ -228,6 +299,8 @@ def apply_ui_overrides(
         retry["delay_seconds"] = delay_seconds
     if monitor_index is not None:
         display["monitor_index"] = monitor_index
+    if capture_mode is not None:
+        display["capture_mode"] = capture_mode
     if retry_timing:
         for key, value in retry_timing.items():
             retry[key] = value
@@ -257,8 +330,13 @@ def build_automator(
     display_cfg = config.get("display", {})
 
     monitor_index = int(display_cfg.get("monitor_index", 1))
+    capture_settings = build_capture_settings(config)
     screen_threshold = float(matching_cfg.get("screen_threshold", matching_cfg.get("threshold", 0.75)))
-    vision = Vision(threshold=float(matching_cfg.get("threshold", 0.8)), monitor_index=monitor_index)
+    vision = Vision(
+        threshold=float(matching_cfg.get("threshold", 0.8)),
+        monitor_index=monitor_index,
+        capture_settings=capture_settings,
+    )
 
     templates = TemplateConfig(
         server_list=templates_cfg.get("server_list", "templates/server_list.png"),
@@ -272,6 +350,8 @@ def build_automator(
         in_game=templates_cfg.get("in_game", "templates/in_game.png"),
         screen_threshold=screen_threshold,
         mods_screen_threshold=float(matching_cfg.get("mods_screen_threshold", 0.55)),
+        mods_detect_mode=_normalize_mods_detect_mode(matching_cfg.get("mods_detect_mode", "hybrid")),
+        mods_screen_region=_normalize_mods_screen_region(matching_cfg.get("mods_screen_region", "center")),
         screen_ready_margin=float(matching_cfg.get("screen_ready_margin", 0.05)),
         click_mode=matching_cfg.get("click_mode", "image"),
     )
@@ -290,9 +370,11 @@ def build_automator(
         mods_wait_seconds=retry_cfg.get("mods_wait_seconds", 8.0),
         recovery_timeout=retry_cfg.get("recovery_timeout", 45.0),
         stuck_server_list_seconds=retry_cfg.get("stuck_server_list_seconds", 30.0),
+        start_countdown_seconds=int(retry_cfg.get("start_countdown_seconds", 3)),
+        screen_stable_polls=max(1, int(retry_cfg.get("screen_stable_polls", 2))),
     )
 
-    ui = UiPositions.from_dict(ui_cfg, monitor_index=monitor_index)
+    ui = UiPositions.from_dict(ui_cfg, monitor_index=monitor_index, capture_settings=capture_settings)
     buttons = ButtonConfig.from_dict(config.get("buttons", {}), matching_cfg)
 
     return LoginAutomator(
@@ -304,4 +386,5 @@ def build_automator(
         window_title=window_cfg.get("title_contains", "ARK: Survival Ascended"),
         bring_to_front=window_cfg.get("bring_to_front", True),
         on_state_change=on_state_change,
+        config=config,
     )

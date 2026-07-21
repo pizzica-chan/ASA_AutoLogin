@@ -3,20 +3,28 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from pathlib import Path
-from typing import Callable
 
 from . import input_handler
-from .app_logging import detail_log, user_log
+from .app_logging import build_runtime_config_snapshot, detail_log, log_runtime_config_detail, user_log
 from .button_templates import ButtonConfig, ui_point_for_key
-from .default_assets import ensure_default_assets, resolve_screen_path
+from .capture import WindowNotFoundError
+from .default_assets import (
+    ensure_default_assets,
+    is_fallback_screen_template,
+    is_user_screen_template,
+    resolve_screen_path,
+    screen_template_source,
+)
 from .ui_positions import Point, UiPositions
 from .vision import MatchResult, Vision
 
 # ② MODS モーダルの JOIN は画面左側、① の一覧 JOIN は右下（X で区別）
 MODS_JOIN_SEARCH_REGION = (0.0, 0.0, 0.58, 1.0)
+# ② 画面一致は中央モーダル領域のみ（背景のサーバー一覧差分を除外）
+MODS_SCREEN_COMPARE_REGION = (0.15, 0.08, 0.85, 0.92)
 # ⑤ JOIN GAME は左寄り4枚レイアウトが主流のため、右側の別カード誤検出を避ける
 JOIN_GAME_SEARCH_REGION = (0.0, 0.0, 0.72, 1.0)
 
@@ -50,10 +58,15 @@ class RetryConfig:
     recovery_timeout: float = 45.0
     stuck_server_list_seconds: float = 30.0
     start_countdown_seconds: int = 3
+    screen_stable_polls: int = 2  # クリック前に条件を連続 N 回満たすまで待つ
 
     @property
     def poll_seconds(self) -> float:
         return self.poll_interval if self.poll_interval > 0 else self.check_interval
+
+    @property
+    def stable_polls(self) -> int:
+        return max(1, self.screen_stable_polls)
 
 
 @dataclass
@@ -69,6 +82,8 @@ class TemplateConfig:
     in_game: str = "templates/in_game.png"
     screen_threshold: float = 0.75
     mods_screen_threshold: float = 0.55
+    mods_detect_mode: str = "hybrid"  # hybrid | screen | button
+    mods_screen_region: str = "center"  # center | full
     screen_ready_margin: float = 0.05
     click_mode: str = "image"  # image | image_only | coordinates | coordinates_only
 
@@ -95,6 +110,7 @@ class LoginAutomator:
         window_title: str = "ARK: Survival Ascended",
         bring_to_front: bool = True,
         on_state_change: Callable[[LoginState, LoginStats], None] | None = None,
+        config: dict | None = None,
     ):
         self.vision = vision
         self.templates = templates
@@ -105,6 +121,7 @@ class LoginAutomator:
         self.bring_to_front = bring_to_front
         self.on_state_change = on_state_change
         self.click_mode = templates.click_mode
+        self.config = config or {}
 
         self._state = LoginState.IDLE
         self._stats = LoginStats()
@@ -220,46 +237,180 @@ class LoginAutomator:
             self.buttons.threshold_relaxed,
         )
 
+    def _mods_compare_region(self) -> tuple[float, float, float, float] | None:
+        if self.templates.mods_screen_region == "center":
+            return MODS_SCREEN_COMPARE_REGION
+        return None
+
     def _mods_screen_score(self, screen=None) -> float:
-        return self._screen_score("required_mods", screen=screen)
+        path = resolve_screen_path("required_mods", self.templates.required_mods)
+        if not path:
+            return 0.0
+        if screen is None:
+            screen = self.vision.capture_screen()
+        result = self.vision.compare_with_reference(
+            path,
+            threshold=0.0,
+            screen=screen,
+            region=self._mods_compare_region(),
+        )
+        return result.confidence
+
+    def _mods_visible_by_screen(self, screen, score: float) -> bool:
+        return score >= self.templates.mods_screen_threshold
+
+    def _mods_visible_by_button(self, screen) -> bool:
+        return self._find_button("join_mods", screen=screen, strict=True).found
 
     def _is_mods_dialog_visible(self, screen=None) -> bool:
         """② MODS 画面の表示判定（クリック位置の妥当性は見ない）"""
         if screen is None:
             screen = self.vision.capture_screen()
 
+        mode = self.templates.mods_detect_mode
         score = self._mods_screen_score(screen=screen)
-        if score >= self.templates.mods_screen_threshold:
+
+        if mode in ("hybrid", "screen") and self._mods_visible_by_screen(screen, score):
             return True
 
-        if self._is_coordinates_only():
-            return False
+        if mode in ("hybrid", "button") and self._mods_visible_by_button(screen):
+            detail_log.debug(
+                "② MODS 画面を join_mods ボタンで検出 (画面類似度: %.2f, 方式: %s)",
+                score,
+                mode,
+            )
+            return True
 
-        return self._find_button("join_mods", screen=screen, strict=True).found
+        return False
+
+    def _wait_for_stable(
+        self,
+        timeout: float,
+        predicate: Callable[[], bool],
+        *,
+        consecutive: int | None = None,
+        success_log: str | None = None,
+        failure_log: str | None = None,
+    ) -> bool:
+        """条件が consecutive 回連続で真になるまで待つ（クリック前の遷移安定用）"""
+        polls = max(1, consecutive if consecutive is not None else self.retry.stable_polls)
+        deadline = time.time() + timeout
+        stable = 0
+        while self._running and time.time() < deadline:
+            if predicate():
+                stable += 1
+                if stable >= polls:
+                    if success_log:
+                        if polls > 1:
+                            detail_log.info("%s (%d回連続)", success_log, polls)
+                        else:
+                            detail_log.info("%s", success_log)
+                    return True
+            else:
+                stable = 0
+            time.sleep(self.retry.poll_seconds)
+
+        if failure_log:
+            detail_log.info(failure_log)
+        return False
+
+    def _wait_for_mods_dialog_stable(self, timeout: float) -> tuple[bool, float]:
+        """② MODS 画面が遷移中でなく安定表示されるまで待つ"""
+        best_score = 0.0
+        best_button = 0.0
+        mode = self.templates.mods_detect_mode
+
+        def predicate() -> bool:
+            nonlocal best_score, best_button
+            screen = self.vision.capture_screen()
+            score = self._mods_screen_score(screen=screen)
+            if score > best_score:
+                best_score = score
+            if mode in ("hybrid", "button"):
+                btn = self._find_button("join_mods", screen=screen, strict=True)
+                if btn.confidence > best_button:
+                    best_button = btn.confidence
+            return self._is_mods_dialog_visible(screen)
+
+        ok = self._wait_for_stable(timeout, predicate)
+        if ok:
+            via = "画面"
+            if mode in ("hybrid", "button") and best_button >= self.buttons.threshold:
+                via = "ボタン" if best_score < self.templates.mods_screen_threshold else "画面+ボタン"
+            msg = f"② MODS 画面の表示が安定しました ({via}: 画面 {best_score:.2f}"
+            if mode in ("hybrid", "button"):
+                msg += f", ボタン {best_button:.2f}"
+            msg += ")"
+            if self.retry.stable_polls > 1:
+                detail_log.info("%s (%d回連続)", msg, self.retry.stable_polls)
+            else:
+                detail_log.info("%s", msg)
+        else:
+            if mode in ("hybrid", "button"):
+                detail_log.info(
+                    "② MODS 画面が安定しませんでした (最高類似度: %.2f / 閾値: %.2f, "
+                    "join_mods ボタン最高: %.2f / 閾値: %.2f, 検出方式: %s)",
+                    best_score,
+                    self.templates.mods_screen_threshold,
+                    best_button,
+                    self.buttons.threshold,
+                    mode,
+                )
+            else:
+                detail_log.info(
+                    "② MODS 画面が安定しませんでした (最高類似度: %.2f / 閾値: %.2f, 検出方式: %s)",
+                    best_score,
+                    self.templates.mods_screen_threshold,
+                    mode,
+                )
+            if self.ui.has_point("join_mods") and is_fallback_screen_template(
+                "required_mods",
+                self.templates.required_mods,
+            ):
+                detail_log.warning(
+                    "required_mods は同梱フォールバック参照です。"
+                    "環境差で検出できない場合はセットアップ②で templates/required_mods.png を登録してください"
+                )
+            elif self.ui.has_point("join_mods") and not resolve_screen_path(
+                "required_mods",
+                self.templates.required_mods,
+            ):
+                detail_log.warning(
+                    "required_mods のフォールバックもありません。"
+                    "MODS サーバーではセットアップ② REQUIRED MODS をキャプチャしてください"
+                )
+            elif (
+                self.ui.has_point("join_mods")
+                and best_score >= 0.25
+                and best_score < self.templates.mods_screen_threshold
+            ):
+                detail_log.warning(
+                    "② MODS 画面の可能性あり (類似度 %.2f)。"
+                    "required_mods.png の再キャプチャまたは mods_screen_threshold の調整を検討してください",
+                    best_score,
+                )
+        return ok, best_score
 
     def _is_mods_dialog_still_open(self, screen=None) -> bool:
         """② クリック後も MODS 画面に残っているか（誤判定で閉じた扱いにしない）"""
         return self._is_mods_dialog_visible(screen=screen)
 
     def _wait_for_mods_dismissed(self) -> bool:
-        deadline = time.time() + self.retry.transition_timeout
-        settled_closed = 0
-        while self._running and time.time() < deadline:
-            if self._is_mods_dialog_still_open(self.vision.capture_screen()):
-                settled_closed = 0
-            else:
-                settled_closed += 1
-                if settled_closed >= 2:
-                    detail_log.info("② MODS 画面が閉じました")
-                    return True
-            time.sleep(self.retry.poll_seconds)
-
-        if self._is_mods_dialog_still_open():
+        ok = self._wait_for_stable(
+            self.retry.transition_timeout,
+            lambda: not self._is_mods_dialog_still_open(self.vision.capture_screen()),
+            success_log="② MODS 画面が閉じました",
+        )
+        if not ok and self._is_mods_dialog_still_open():
             detail_log.warning("② MODS 画面が閉じませんでした")
-        return False
+        return ok
 
     def _button_visible(self, button_key: str, *, strict: bool = True) -> bool:
         return self._find_button(button_key, strict=strict).found
+
+    def _can_use_button_detection(self, button_key: str) -> bool:
+        """到達判定にボタン PNG を使えるか（座標未設定でも PNG があれば可）"""
+        return bool(self.buttons.list_paths(button_key))
 
     def _screen_score(self, screen_name: str, screen=None) -> float:
         path = resolve_screen_path(screen_name, getattr(self.templates, screen_name, None))
@@ -273,20 +424,44 @@ class LoginAutomator:
         return result.confidence
 
     def _has_connection_failed_dialog(self, screen=None) -> bool:
-        if self._is_coordinates_only():
-            matched, score = self._match_screen("connection_failed", screen=screen)
-            if matched:
-                detail_log.debug("画面検出: connection_failed (類似度: %.2f)", score)
-            return matched
-        return self._find_button("cancel_failed", screen=screen, strict=True).found
+        if screen is None:
+            screen = self.vision.capture_screen()
+        if not self._is_coordinates_only():
+            return self._find_button("cancel_failed", screen=screen, strict=True).found
+        matched, score = self._match_screen("connection_failed", screen=screen)
+        if matched:
+            detail_log.debug("画面検出: connection_failed (類似度: %.2f)", score)
+            return True
+        if self._can_use_button_detection("cancel_failed"):
+            btn = self._find_button("cancel_failed", screen=screen, strict=True)
+            if btn.found:
+                detail_log.debug(
+                    "③-A を cancel_failed ボタンで検出 (画面類似度: %.2f, ボタン: %.2f)",
+                    score,
+                    btn.confidence,
+                )
+                return True
+        return False
 
     def _has_network_failure_dialog(self, screen=None) -> bool:
-        if self._is_coordinates_only():
-            matched, score = self._match_screen("network_failure", screen=screen)
-            if matched:
-                detail_log.debug("画面検出: network_failure (類似度: %.2f)", score)
-            return matched
-        return self._find_button("accept_network_failure", screen=screen, strict=True).found
+        if screen is None:
+            screen = self.vision.capture_screen()
+        if not self._is_coordinates_only():
+            return self._find_button("accept_network_failure", screen=screen, strict=True).found
+        matched, score = self._match_screen("network_failure", screen=screen)
+        if matched:
+            detail_log.debug("画面検出: network_failure (類似度: %.2f)", score)
+            return True
+        if self._can_use_button_detection("accept_network_failure"):
+            btn = self._find_button("accept_network_failure", screen=screen, strict=True)
+            if btn.found:
+                detail_log.debug(
+                    "⑥ を accept_network_failure ボタンで検出 (画面類似度: %.2f, ボタン: %.2f)",
+                    score,
+                    btn.confidence,
+                )
+                return True
+        return False
 
     def _is_server_list_ready(self, screen=None) -> tuple[bool, float]:
         """サーバー選択済み・JOIN 可能な一覧（エラーダイアログなし）"""
@@ -319,6 +494,27 @@ class LoginAutomator:
         )
         return result.found, result.confidence
 
+    def _is_main_menu_ready(self, screen=None) -> tuple[bool, float, float]:
+        """⑤ メインメニュー到達判定（JOIN GAME ボタン or main_menu 画面）"""
+        if screen is None:
+            screen = self.vision.capture_screen()
+        join = self._find_button("join_game", screen=screen, strict=True)
+        if join.found:
+            return True, join.confidence, 0.0
+        menu_matched, menu_score = self._match_screen("main_menu", screen=screen)
+        return menu_matched, join.confidence, menu_score
+
+    def _is_empty_server_list_visible(self, screen=None) -> bool:
+        """④ 空のサーバー一覧（画面 or back_empty_list ボタン）"""
+        if screen is None:
+            screen = self.vision.capture_screen()
+        matched, _ = self._match_screen("server_list_empty", screen=screen)
+        if matched:
+            return True
+        if self._can_use_button_detection("back_empty_list"):
+            return self._find_button("back_empty_list", screen=screen, strict=True).found
+        return False
+
     def _ensure_at_step1(self) -> bool:
         """フロー仕様どおり ① の状態になるまで、決められた手順だけで復帰する"""
         ready, score = self._is_server_list_ready()
@@ -340,11 +536,12 @@ class LoginAutomator:
                 return False
 
         empty_list, _ = self._match_screen("server_list_empty")
-        if empty_list and (
-            self._is_coordinates_only() or self._find_button("back_empty_list", strict=True).found
-        ):
+        if self._is_empty_server_list_visible():
             user_log.info("サーバー一覧が空です。メインメニューに戻ります…")
-            detail_log.info("④ を検出。BACK → ⑤ JOIN GAME → ① を実行します")
+            detail_log.info(
+                "④ を検出。BACK → ⑤ JOIN GAME → ① を実行します"
+                + ("" if empty_list else "（back_empty_list ボタン）")
+            )
             self._set_state(LoginState.RECOVERING)
             if not self._click_target_when_ready("back_empty_list", "④ BACK"):
                 return False
@@ -352,10 +549,19 @@ class LoginAutomator:
             if not self._return_to_server_list_via_main_menu():
                 return False
 
-        main_menu, _ = self._match_screen("main_menu")
-        if main_menu:
+        main_ready, join_score, menu_score = self._is_main_menu_ready()
+        if main_ready:
             user_log.info("メインメニューです。サーバー一覧に戻ります…")
-            detail_log.info("⑤ を検出。JOIN GAME → ① を実行します")
+            if join_score >= self.buttons.threshold_relaxed:
+                detail_log.info(
+                    "⑤ を検出。JOIN GAME → ① を実行します（ボタン: %.2f）",
+                    join_score,
+                )
+            else:
+                detail_log.info(
+                    "⑤ を検出。JOIN GAME → ① を実行します（画面: %.2f）",
+                    menu_score,
+                )
             if not self._return_to_server_list_via_main_menu():
                 return False
 
@@ -376,12 +582,13 @@ class LoginAutomator:
         if button_key == "join_server_list":
             return self._wait_for_step1_ready(timeout)
         if button_key == "join_mods":
-            deadline = time.time() + timeout
-            while self._running and time.time() < deadline:
-                if self._is_mods_dialog_visible():
-                    return True
-                time.sleep(self.retry.poll_seconds)
-            return False
+            stable, score = self._wait_for_mods_dialog_stable(timeout)
+            if not stable:
+                detail_log.warning(
+                    "② MODS 画面の安定待ちがタイムアウトしました (最高類似度: %.2f)",
+                    score,
+                )
+            return stable
         screen_map = {
             "cancel_failed": "connection_failed",
             "back_empty_list": "server_list_empty",
@@ -390,21 +597,34 @@ class LoginAutomator:
         }
         screen_name = screen_map.get(button_key)
         if screen_name:
-            return self._wait_for_screen(screen_name, timeout)
+            fallback_button = button_key if self._is_coordinates_only() else None
+            return self._wait_for_screen(screen_name, timeout, button_key=fallback_button)
         return True
 
-    def _wait_for_button(self, button_key: str, timeout: float) -> bool:
-        deadline = time.time() + timeout
+    def _wait_for_button(
+        self,
+        button_key: str,
+        timeout: float,
+        *,
+        require_stable: bool = True,
+    ) -> bool:
         best_confidence = 0.0
-        while self._running and time.time() < deadline:
+
+        def predicate() -> bool:
+            nonlocal best_confidence
             result = self._find_button(button_key, strict=True)
             if result.confidence > best_confidence:
                 best_confidence = result.confidence
-            if result.found:
-                detail_log.info("ボタン検出: %s (類似度: %.2f)", button_key, result.confidence)
-                return True
-            time.sleep(self.retry.poll_seconds)
+            return result.found
 
+        consecutive = self.retry.stable_polls if require_stable else 1
+        if self._wait_for_stable(timeout, predicate, consecutive=consecutive):
+            msg = f"ボタン検出: {button_key} (類似度: {best_confidence:.2f})"
+            if consecutive > 1:
+                detail_log.info("%s (%d回連続)", msg, consecutive)
+            else:
+                detail_log.info("%s", msg)
+            return True
         if best_confidence > 0:
             detail_log.info(
                 "ボタン %s は未検出（最高類似度: %.2f / 閾値: %.2f）",
@@ -414,20 +634,31 @@ class LoginAutomator:
             )
         return False
 
-    def _wait_for_step1_ready(self, timeout: float) -> bool:
+    def _wait_for_step1_ready(
+        self,
+        timeout: float,
+        *,
+        require_stable: bool = True,
+    ) -> bool:
         """① サーバー一覧到達を待つ（_is_server_list_ready と同じ基準）"""
-        deadline = time.time() + timeout
         best_score = 0.0
-        while self._running and time.time() < deadline:
+        threshold = self.templates.screen_threshold - self.templates.screen_ready_margin
+
+        def predicate() -> bool:
+            nonlocal best_score
             ready, score = self._is_server_list_ready()
             if score > best_score:
                 best_score = score
-            if ready:
-                detail_log.info("① サーバー一覧の状態を確認しました (類似度: %.2f)", score)
-                return True
-            time.sleep(self.retry.poll_seconds)
+            return ready
 
-        threshold = self.templates.screen_threshold - self.templates.screen_ready_margin
+        consecutive = self.retry.stable_polls if require_stable else 1
+        if self._wait_for_stable(timeout, predicate, consecutive=consecutive):
+            msg = f"① サーバー一覧の状態を確認しました (類似度: {best_score:.2f})"
+            if consecutive > 1:
+                detail_log.info("%s (%d回連続)", msg, consecutive)
+            else:
+                detail_log.info("%s", msg)
+            return True
         if best_score > 0:
             detail_log.info(
                 "① 未検出（server_list 最高: %.2f / 閾値: %.2f）",
@@ -436,43 +667,75 @@ class LoginAutomator:
             )
         return False
 
-    def _wait_for_step5_ready(self, timeout: float) -> bool:
+    def _wait_for_step5_ready(
+        self,
+        timeout: float,
+        *,
+        require_stable: bool = True,
+    ) -> bool:
         """⑤ メインメニュー到達を待つ（JOIN GAME ボタン or main_menu 画面のどちらか先）"""
-        deadline = time.time() + timeout
         best_join = 0.0
         best_menu = 0.0
-        while self._running and time.time() < deadline:
-            screen = self.vision.capture_screen()
 
-            if not self._is_coordinates_only():
-                join = self._find_button("join_game", screen=screen, strict=True)
-                if join.confidence > best_join:
-                    best_join = join.confidence
-                if join.found:
-                    detail_log.info("ボタン検出: join_game (類似度: %.2f)", join.confidence)
-                    return True
-
-            menu_matched, menu_score = self._match_screen("main_menu", screen=screen)
+        def predicate() -> bool:
+            nonlocal best_join, best_menu
+            ready, join_score, menu_score = self._is_main_menu_ready()
+            if join_score > best_join:
+                best_join = join_score
             if menu_score > best_menu:
                 best_menu = menu_score
-            if menu_matched:
-                detail_log.info("画面検出: main_menu (類似度: %.2f)", menu_score)
-                return True
+            return ready
 
+        consecutive = self.retry.stable_polls if require_stable else 1
+
+        def success_log() -> str:
+            if best_join >= self.buttons.threshold_relaxed:
+                return f"ボタン検出: join_game (類似度: {best_join:.2f})"
+            return f"画面検出: main_menu (類似度: {best_menu:.2f})"
+
+        # success_log は predicate 後に評価する必要があるため inline
+        deadline = time.time() + timeout
+        stable = 0
+        polls = consecutive
+        while self._running and time.time() < deadline:
+            if predicate():
+                stable += 1
+                if stable >= polls:
+                    msg = success_log()
+                    if polls > 1:
+                        detail_log.info("%s (%d回連続)", msg, polls)
+                    else:
+                        detail_log.info("%s", msg)
+                    return True
+            else:
+                stable = 0
             time.sleep(self.retry.poll_seconds)
 
         if best_join > 0 or best_menu > 0:
             detail_log.info(
-                "⑤ 未検出（join_game 最高: %.2f, main_menu 最高: %.2f / 閾値: %.2f）",
+                "⑤ 未検出（join_game 最高: %.2f, main_menu 最高: %.2f / ボタン: %.2f, 画面: %.2f）",
                 best_join,
                 best_menu,
-                self.buttons.threshold,
+                self.buttons.threshold_relaxed,
+                self.templates.screen_threshold,
             )
         return False
 
     def _wait_after_click(self) -> None:
         delay = self.retry.after_click_delay or self.retry.join_click_delay
         time.sleep(delay)
+
+    def _wait_before_click_fn(self, button_key: str):
+        """クリック前の待機: 座標クリック主体は画面テンプレート、画像主体はボタン画像"""
+        if self._is_coordinates_only():
+            return self._wait_for_screen_before_click
+        if self.click_mode == "coordinates" and ui_point_for_key(self.ui, button_key):
+            return self._wait_for_screen_before_click
+        if self.buttons.get(button_key):
+            return self._wait_for_button
+        if ui_point_for_key(self.ui, button_key):
+            return self._wait_for_screen_before_click
+        return self._wait_for_button
 
     def _click_target_when_ready(
         self,
@@ -482,16 +745,16 @@ class LoginAutomator:
     ) -> bool:
         """ボタンが表示されるまで待ってからクリック"""
         wait_timeout = timeout if timeout is not None else self.retry.transition_timeout
-        should_wait = self._is_coordinates_only() or self.buttons.get(button_key) or ui_point_for_key(self.ui, button_key)
+        should_wait = (
+            self._is_coordinates_only()
+            or self.buttons.get(button_key)
+            or ui_point_for_key(self.ui, button_key)
+        )
         if should_wait:
-            wait_fn = (
-                self._wait_for_screen_before_click
-                if self._is_coordinates_only()
-                else self._wait_for_button
-            )
-            if not wait_fn(button_key, wait_timeout):
+            if not self._wait_before_click_fn(button_key)(button_key, wait_timeout):
                 user_log.warning("%s が見つかりませんでした（%d 秒待機）", label, int(wait_timeout))
                 detail_log.warning("%s が %d 秒以内に表示されませんでした", label, int(wait_timeout))
+                return False
         time.sleep(self.retry.transition_settle)
         return self._click_target(button_key, label)
 
@@ -499,14 +762,60 @@ class LoginAutomator:
         self,
         screen_name: str,
         timeout: float,
+        *,
+        require_stable: bool = True,
+        button_key: str | None = None,
     ) -> bool:
-        deadline = time.time() + timeout
-        while self._running and time.time() < deadline:
+        best_score = 0.0
+        best_button = 0.0
+
+        def predicate() -> bool:
+            nonlocal best_score, best_button
             matched, score = self._match_screen(screen_name)
+            if score > best_score:
+                best_score = score
             if matched:
-                detail_log.info("画面検出: %s (類似度: %.2f)", screen_name, score)
                 return True
-            time.sleep(self.retry.poll_seconds)
+            if button_key and self._can_use_button_detection(button_key):
+                btn = self._find_button(button_key, strict=True)
+                if btn.confidence > best_button:
+                    best_button = btn.confidence
+                return btn.found
+            return False
+
+        consecutive = self.retry.stable_polls if require_stable else 1
+        if self._wait_for_stable(timeout, predicate, consecutive=consecutive):
+            if (
+                button_key
+                and best_button >= self.buttons.threshold_relaxed
+                and best_score < self.templates.screen_threshold
+            ):
+                msg = f"画面検出: {screen_name} (ボタン {button_key}: {best_button:.2f}, 画面: {best_score:.2f})"
+            else:
+                msg = f"画面検出: {screen_name} (類似度: {best_score:.2f})"
+            if consecutive > 1:
+                detail_log.info("%s (%d回連続)", msg, consecutive)
+            else:
+                detail_log.info("%s", msg)
+            return True
+        if best_score > 0 or best_button > 0:
+            if button_key:
+                detail_log.info(
+                    "画面 %s 未検出（%s 最高: %.2f, 画面最高: %.2f / ボタン: %.2f, 画面: %.2f）",
+                    screen_name,
+                    button_key,
+                    best_button,
+                    best_score,
+                    self.buttons.threshold_relaxed,
+                    self.templates.screen_threshold,
+                )
+            else:
+                detail_log.info(
+                    "画面 %s 未検出（最高: %.2f / 閾値: %.2f）",
+                    screen_name,
+                    best_score,
+                    self.templates.screen_threshold,
+                )
         return False
 
     def _click(self, point: Point, label: str) -> None:
@@ -529,6 +838,7 @@ class LoginAutomator:
         if self.click_mode == "coordinates":
             fallback = ui_point_for_key(self.ui, button_key)
             if fallback:
+                user_log.info("%s を座標でクリックします", label)
                 self._click(fallback, label)
                 return True
 
@@ -596,18 +906,18 @@ class LoginAutomator:
 
         deadline = time.time() + self.retry.mods_wait_seconds
         while self._running and time.time() < deadline:
-            screen = self.vision.capture_screen()
-            if not self._is_mods_dialog_visible(screen):
-                time.sleep(self.retry.poll_seconds)
+            remaining = max(0.0, deadline - time.time())
+            if remaining <= 0:
+                break
+            stable, score = self._wait_for_mods_dialog_stable(
+                min(remaining, self.retry.transition_timeout),
+            )
+            if not stable:
                 continue
 
             self._set_state(LoginState.JOINING_MODS)
-            mods_screen, score = self._match_screen("required_mods", screen=screen)
             user_log.info("MODS 画面で JOIN を押します")
-            detail_log.info(
-                "② MODS 画面を検出 (画面: %s)",
-                f"{score:.2f}" if score > 0 else "なし",
-            )
+            detail_log.info("② MODS 画面を検出 (画面: %.2f)", score)
 
             for attempt in range(2):
                 self._focus_game()
@@ -633,11 +943,30 @@ class LoginAutomator:
         started_at = time.time()
         deadline = started_at + self.retry.result_timeout
         movie_seen = False
+        stuck_on_server_list_since: float | None = None
         user_log.info("ログイン結果を待っています…")
         detail_log.info("③ ログイン試行を待機します")
 
         while self._running and time.time() < deadline:
             screen = self.vision.capture_screen()
+
+            ready, score = self._is_server_list_ready(screen=screen)
+            if ready:
+                if stuck_on_server_list_since is None:
+                    stuck_on_server_list_since = time.time()
+                elif (
+                    time.time() - stuck_on_server_list_since
+                    >= self.retry.stuck_server_list_seconds
+                ):
+                    user_log.warning("サーバー一覧のまま停滞しています。リトライします…")
+                    detail_log.warning(
+                        "③ 停滞判定: server_list が %.0f 秒以上 (類似度: %.2f)",
+                        self.retry.stuck_server_list_seconds,
+                        score,
+                    )
+                    return "timeout"
+            else:
+                stuck_on_server_list_since = None
 
             in_game, score = self._match_screen("in_game", screen=screen)
             if in_game:
@@ -653,6 +982,7 @@ class LoginAutomator:
                     deadline = max(deadline, movie_deadline)
                     user_log.info("ログイン動画を再生中です。しばらく待ちます…")
                     detail_log.info(
+                        "ログインムービー検出。追加待機 %.0f 秒",
                         self.retry.login_movie_timeout,
                     )
                 else:
@@ -679,6 +1009,7 @@ class LoginAutomator:
 
         user_log.warning("ログイン結果が出ませんでした（タイムアウト）")
         detail_log.warning(
+            "③ タイムアウト (%.0f 秒)",
             time.time() - started_at,
         )
         return "timeout"
@@ -697,12 +1028,12 @@ class LoginAutomator:
 
         self._set_state(LoginState.RECOVERING)
 
-        if not self._wait_for_button("back_empty_list", self.retry.recovery_timeout):
-            detail_log.warning("④: BACK ボタンを検出できませんでした")
-            return False
-
-        time.sleep(self.retry.transition_settle)
-        if not self._click_target("back_empty_list", "④ BACK"):
+        if not self._click_target_when_ready(
+            "back_empty_list",
+            "④ BACK",
+            timeout=self.retry.recovery_timeout,
+        ):
+            detail_log.warning("④: BACK ボタンが見えませんでした")
             return False
         self._wait_after_click()
 
@@ -717,8 +1048,11 @@ class LoginAutomator:
             detail_log.warning("メインメニュー / JOIN GAME を検出できませんでした")
             return False
 
-        time.sleep(self.retry.transition_settle)
-        if not self._click_target("join_game", "⑤ JOIN GAME"):
+        if not self._click_target_when_ready(
+            "join_game",
+            "⑤ JOIN GAME",
+            timeout=self.retry.transition_timeout,
+        ):
             return False
         self._wait_after_click()
 
@@ -733,16 +1067,14 @@ class LoginAutomator:
 
     def _wait_for_title_screen(self, timeout: float) -> bool:
         """⑦ タイトル画面（⑥ のダイアログ消去後）を待つ"""
-        if Path(self.templates.title_screen).exists():
+        if resolve_screen_path("title_screen", self.templates.title_screen):
             return self._wait_for_screen("title_screen", timeout)
 
-        deadline = time.time() + timeout
-        while self._running and time.time() < deadline:
-            if not self._has_network_failure_dialog():
-                detail_log.info("⑦ タイトル画面に遷移しました（エラーダイアログ消失）")
-                return True
-            time.sleep(self.retry.poll_seconds)
-        return False
+        return self._wait_for_stable(
+            timeout,
+            lambda: not self._has_network_failure_dialog(),
+            success_log="⑦ タイトル画面に遷移しました（エラーダイアログ消失）",
+        )
 
     def _proceed_from_title_screen_to_main_menu(self) -> bool:
         """⑦ Space キー → ⑤ メインメニュー"""
@@ -800,23 +1132,105 @@ class LoginAutomator:
             return True
         return self._stats.attempts < self.retry.max_attempts
 
+    def _warn_coordinates_only_screen_templates(self) -> None:
+        """座標のみモード: templates/ 未登録時は fallback または missing を通知"""
+        labels = {
+            "required_mods": "② MODS 画面",
+            "connection_failed": "③-A CONNECTION FAILED",
+            "server_list_empty": "④ 空のサーバー一覧",
+            "main_menu": "⑤ メインメニュー",
+            "network_failure": "⑥ NETWORK FAILURE",
+            "in_game": "ログイン成功（ゲーム内）",
+            "login_movie": "③ ログイン動画",
+            "title_screen": "⑦ タイトル画面",
+        }
+        recovery_keys = (
+            "connection_failed",
+            "server_list_empty",
+            "main_menu",
+            "network_failure",
+        )
+        optional_keys = ("in_game", "login_movie", "title_screen")
+
+        non_user: list[str] = []
+        using_fallback = False
+
+        def note(key: str) -> None:
+            source = screen_template_source(key, getattr(self.templates, key, None))
+            if source == "user":
+                return
+            non_user.append(f"{labels[key]} [{source}]")
+            nonlocal using_fallback
+            if source == "fallback":
+                using_fallback = True
+
+        if self.ui.has_point("join_mods"):
+            note("required_mods")
+
+        for key in recovery_keys:
+            note(key)
+
+        for key in optional_keys:
+            source = screen_template_source(key, getattr(self.templates, key, None))
+            if source != "user":
+                detail_log.info("任意テンプレート: %s (%s)", labels[key], source)
+
+        if non_user:
+            detail_log.warning(
+                "coordinates_only: templates/ 未登録の画面: %s",
+                ", ".join(non_user),
+            )
+
+        if self.ui.has_point("join_mods") and is_fallback_screen_template(
+            "required_mods",
+            self.templates.required_mods,
+        ):
+            if self.templates.required_mods and not is_user_screen_template(
+                "required_mods",
+                self.templates.required_mods,
+            ):
+                detail_log.warning(
+                    "config に %s とありますがファイルがありません。"
+                    "同梱フォールバックで代替しています（② セットアップ推奨）",
+                    self.templates.required_mods,
+                )
+            user_log.info(
+                "② MODS 画面は同梱フォールバックを使用中です。"
+                "MODS サーバーではセットアップ②での登録を推奨します"
+            )
+        elif self.ui.has_point("join_mods") and not resolve_screen_path(
+            "required_mods",
+            self.templates.required_mods,
+        ):
+            user_log.warning(
+                "② MODS 画面のテンプレートがありません。"
+                "MODS サーバーではセットアップ②を実行してください"
+            )
+        elif using_fallback:
+            user_log.info(
+                "一部の画面テンプレートは同梱フォールバックを使用中です。"
+                "安定動作のためフルセットアップを推奨します"
+            )
+        elif non_user:
+            user_log.info(
+                "一部の復帰用画面テンプレートが未登録です。"
+                "失敗時の復帰が不安定になる場合はフルセットアップを実行してください"
+            )
+
     def run(self) -> LoginState:
         self._running = True
         self._stats = LoginStats()
         ensure_default_assets()
         user_log.info("自動ログインを開始します")
         detail_log.info("自動ログインを開始します")
-        detail_log.info(
-            "設定: click_mode=%s monitor=%s screen_threshold=%.2f button_threshold=%.2f "
-            "button_relaxed=%.2f mods_threshold=%.2f ready_margin=%.2f",
-            self.click_mode,
-            self.vision.monitor.label,
-            self.templates.screen_threshold,
-            self.buttons.threshold,
-            self.buttons.threshold_relaxed,
-            self.templates.mods_screen_threshold,
-            self.templates.screen_ready_margin,
+        runtime_snapshot = build_runtime_config_snapshot(
+            self.config,
+            vision=self.vision,
+            window_title=self.window_title,
+            bring_to_front=self.bring_to_front,
+            buttons=self.buttons,
         )
+        log_runtime_config_detail(self.config, runtime=runtime_snapshot)
 
         if not resolve_screen_path("server_list", self.templates.server_list):
             user_log.error("サーバー一覧の画像が未設定です。セットアップを実行してください")
@@ -825,14 +1239,23 @@ class LoginAutomator:
             return LoginState.FAILED
 
         if self._is_coordinates_only():
-            if not self.ui.is_configured():
+            if not self.ui.is_configured(coordinates_only=True):
                 user_log.error("クリック座標が未設定です。クリック座標タブで入力してください")
                 detail_log.error("coordinates_only ですが ui 座標が未設定です")
                 self._set_state(LoginState.FAILED)
                 return LoginState.FAILED
+            self._warn_coordinates_only_screen_templates()
         elif not self.buttons.is_configured(self.ui):
             user_log.error("ボタン画像または座標が未設定です。セットアップを実行してください")
             detail_log.error("ボタン画像または UI 座標が未設定です。セットアップを実行してください")
+            self._set_state(LoginState.FAILED)
+            return LoginState.FAILED
+
+        try:
+            self.vision.capture_screen()
+        except WindowNotFoundError as exc:
+            user_log.error("ARK ウィンドウが見つかりません")
+            detail_log.error("キャプチャ失敗: %s", exc)
             self._set_state(LoginState.FAILED)
             return LoginState.FAILED
 

@@ -5,7 +5,8 @@ from __future__ import annotations
 import tkinter as tk
 from collections.abc import Callable
 
-from .display import get_monitor
+from .capture import CaptureSettings, CaptureRegion, WindowNotFoundError, resolve_capture_region
+from .input_handler import bring_window_to_front
 
 PREVIEW_COLORS = (
     "#ff453a",
@@ -17,46 +18,67 @@ PREVIEW_COLORS = (
 )
 
 
+def _strict_window(capture_settings: CaptureSettings) -> bool:
+    return capture_settings.mode == "window"
+
+
+def _resolve_overlay_region(
+    capture_settings: CaptureSettings,
+    *,
+    strict_window: bool,
+    bring_to_front: bool = False,
+) -> CaptureRegion:
+    if bring_to_front and capture_settings.mode == "window":
+        bring_window_to_front(capture_settings.window_title)
+    try:
+        return resolve_capture_region(capture_settings, strict_window=strict_window)
+    except WindowNotFoundError as exc:
+        raise WindowNotFoundError(str(exc)) from exc
+
+
 class CoordinatePreviewOverlay(tk.Toplevel):
-    """選択モニター上にクリック座標を点で表示する"""
+    """キャプチャ領域上にクリック座標を点で表示する"""
 
     def __init__(
         self,
         parent: tk.Misc,
         *,
-        monitor_index: int,
+        capture_settings: CaptureSettings,
         points: list[tuple[str, float, float]],
+        bring_to_front: bool = False,
     ):
         super().__init__(parent)
         self.title("座標プレビュー")
-        self._monitor = get_monitor(monitor_index)
+        region = _resolve_overlay_region(
+            capture_settings,
+            strict_window=_strict_window(capture_settings),
+            bring_to_front=bring_to_front,
+        )
 
         self.overrideredirect(True)
         self.attributes("-topmost", True)
         self.configure(bg="#101010")
         self.attributes("-alpha", 0.55)
 
-        geometry = (
-            f"{self._monitor.width}x{self._monitor.height}"
-            f"+{self._monitor.left}+{self._monitor.top}"
-        )
+        geometry = f"{region.width}x{region.height}+{region.left}+{region.top}"
         self.geometry(geometry)
 
         canvas = tk.Canvas(
             self,
-            width=self._monitor.width,
-            height=self._monitor.height,
+            width=region.width,
+            height=region.height,
             bg="#101010",
             highlightthickness=0,
         )
         canvas.pack(fill=tk.BOTH, expand=True)
 
+        mode_label = "ゲームウィンドウ" if region.mode == "window" else "モニター全体"
         hint = (
-            "クリック座標プレビュー — 色の点が設定位置です。"
+            f"クリック座標プレビュー（{mode_label}）— 色の点が設定位置です。"
             " [Esc] または [クリック] で閉じます"
         )
         canvas.create_text(
-            self._monitor.width // 2,
+            region.width // 2,
             28,
             text=hint,
             fill="#ffffff",
@@ -68,8 +90,8 @@ class CoordinatePreviewOverlay(tk.Toplevel):
             if x_percent <= 0 or y_percent <= 0:
                 continue
             color = PREVIEW_COLORS[index % len(PREVIEW_COLORS)]
-            x = int(self._monitor.width * x_percent / 100)
-            y = int(self._monitor.height * y_percent / 100)
+            x = int(region.width * x_percent / 100)
+            y = int(region.height * y_percent / 100)
             canvas.create_oval(
                 x - radius,
                 y - radius,
@@ -97,19 +119,24 @@ class CoordinatePreviewOverlay(tk.Toplevel):
 
 
 class CoordinatePickOverlay(tk.Toplevel):
-    """選択モニター上でクリック位置を％座標として取得する"""
+    """キャプチャ領域上でクリック位置を％座標として取得する"""
 
     def __init__(
         self,
         parent: tk.Misc,
         *,
-        monitor_index: int,
+        capture_settings: CaptureSettings,
         label: str,
         on_pick: Callable[[float, float], None],
         on_cancel: Callable[[], None] | None = None,
+        bring_to_front: bool = False,
     ):
         super().__init__(parent)
-        self._monitor = get_monitor(monitor_index)
+        self._region = _resolve_overlay_region(
+            capture_settings,
+            strict_window=_strict_window(capture_settings),
+            bring_to_front=bring_to_front,
+        )
         self._on_pick = on_pick
         self._on_cancel = on_cancel
 
@@ -119,15 +146,15 @@ class CoordinatePickOverlay(tk.Toplevel):
         self.attributes("-alpha", 0.42)
 
         geometry = (
-            f"{self._monitor.width}x{self._monitor.height}"
-            f"+{self._monitor.left}+{self._monitor.top}"
+            f"{self._region.width}x{self._region.height}"
+            f"+{self._region.left}+{self._region.top}"
         )
         self.geometry(geometry)
 
         canvas = tk.Canvas(
             self,
-            width=self._monitor.width,
-            height=self._monitor.height,
+            width=self._region.width,
+            height=self._region.height,
             bg="#101010",
             highlightthickness=0,
             cursor="crosshair",
@@ -139,7 +166,7 @@ class CoordinatePickOverlay(tk.Toplevel):
             "　　[Esc] キャンセル"
         )
         canvas.create_text(
-            self._monitor.width // 2,
+            self._region.width // 2,
             28,
             text=hint,
             fill="#ffffff",
@@ -158,12 +185,16 @@ class CoordinatePickOverlay(tk.Toplevel):
 
     def _on_motion(self, event: tk.Event) -> None:
         widget = event.widget
-        widget.coords(self._cross_v, event.x, 0, event.x, self._monitor.height)
-        widget.coords(self._cross_h, 0, event.y, self._monitor.width, event.y)
+        widget.coords(self._cross_v, event.x, 0, event.x, self._region.height)
+        widget.coords(self._cross_h, 0, event.y, self._region.width, event.y)
 
     def _on_click(self, event: tk.Event) -> None:
-        x_percent = round(event.x / self._monitor.width * 100, 2)
-        y_percent = round(event.y / self._monitor.height * 100, 2)
+        x_percent, y_percent = percent_from_capture_click(
+            event.x,
+            event.y,
+            width=self._region.width,
+            height=self._region.height,
+        )
         self._on_pick(x_percent, y_percent)
         self.destroy()
 
@@ -173,31 +204,52 @@ class CoordinatePickOverlay(tk.Toplevel):
         self.destroy()
 
 
+def percent_from_capture_click(
+    x: int,
+    y: int,
+    *,
+    width: int,
+    height: int,
+) -> tuple[float, float]:
+    """キャプチャ領域上のピクセル座標を % 座標に変換"""
+    if width <= 0 or height <= 0:
+        return 0.0, 0.0
+    return round(x / width * 100, 2), round(y / height * 100, 2)
+
+
 def pick_coordinate_on_screen(
     parent: tk.Misc,
     *,
-    monitor_index: int,
+    capture_settings: CaptureSettings,
     label: str,
     on_pick: Callable[[float, float], None],
     on_cancel: Callable[[], None] | None = None,
+    bring_to_front: bool = False,
 ) -> None:
-    """モニター上のクリックで％座標を取得するオーバーレイを表示"""
+    """キャプチャ領域上のクリックで％座標を取得するオーバーレイを表示"""
     CoordinatePickOverlay(
         parent,
-        monitor_index=monitor_index,
+        capture_settings=capture_settings,
         label=label,
         on_pick=on_pick,
         on_cancel=on_cancel,
+        bring_to_front=bring_to_front,
     )
 
 
 def show_coordinate_preview(
     parent: tk.Misc,
     *,
-    monitor_index: int,
+    capture_settings: CaptureSettings,
     points: list[tuple[str, float, float]],
+    bring_to_front: bool = False,
 ) -> None:
     """座標プレビューオーバーレイを表示"""
     if not points:
         return
-    CoordinatePreviewOverlay(parent, monitor_index=monitor_index, points=points)
+    CoordinatePreviewOverlay(
+        parent,
+        capture_settings=capture_settings,
+        points=points,
+        bring_to_front=bring_to_front,
+    )

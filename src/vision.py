@@ -10,6 +10,7 @@ import mss
 import numpy as np
 
 from .app_logging import detail_log
+from .capture import CaptureRegion, CaptureSettings, resolve_capture_region
 from .display import MonitorInfo, get_monitor
 
 # 画面内の矩形（幅・高さに対する比率 0.0〜1.0）
@@ -27,14 +28,33 @@ class MatchResult:
 
 
 class Vision:
-    def __init__(self, threshold: float = 0.8, monitor_index: int = 1):
+    def __init__(
+        self,
+        threshold: float = 0.8,
+        monitor_index: int = 1,
+        *,
+        capture_settings: CaptureSettings | None = None,
+    ):
         self.threshold = threshold
         self.monitor_index = monitor_index
-        self._sct = mss.mss()
+        self.capture_settings = capture_settings or CaptureSettings(monitor_index=monitor_index)
+        self._sct = mss.MSS()
         self._monitor = get_monitor(monitor_index)
+        self._last_region = resolve_capture_region(self.capture_settings, strict_window=False)
+
+    def set_capture_settings(self, capture_settings: CaptureSettings) -> None:
+        self.capture_settings = capture_settings
+        self.monitor_index = capture_settings.monitor_index
+        self._monitor = get_monitor(capture_settings.monitor_index)
+        self._last_region = resolve_capture_region(capture_settings, strict_window=False)
 
     def set_monitor(self, monitor_index: int) -> None:
         self.monitor_index = monitor_index
+        self.capture_settings = CaptureSettings(
+            mode=self.capture_settings.mode,
+            monitor_index=monitor_index,
+            window_title=self.capture_settings.window_title,
+        )
         self._monitor = get_monitor(monitor_index)
         detail_log.info("キャプチャモニターを変更: %s", self._monitor.label)
 
@@ -42,12 +62,30 @@ class Vision:
     def monitor(self) -> MonitorInfo:
         return self._monitor
 
+    @property
+    def capture_region(self) -> CaptureRegion:
+        return self._last_region
+
     def to_absolute(self, x: int, y: int) -> tuple[int, int]:
-        return self._monitor.left + x, self._monitor.top + y
+        """キャプチャ画像上の相対座標を、現在のキャプチャ領域基準の絶対座標に変換する"""
+        region = resolve_capture_region(
+            self.capture_settings,
+            strict_window=self.capture_settings.mode == "window",
+        )
+        return region.to_absolute(x, y)
 
     def capture_screen(self) -> np.ndarray:
-        monitor = self._sct.monitors[self.monitor_index]
-        screenshot = self._sct.grab(monitor)
+        self._last_region = resolve_capture_region(
+            self.capture_settings,
+            strict_window=self.capture_settings.mode == "window",
+        )
+        bbox = {
+            "left": self._last_region.left,
+            "top": self._last_region.top,
+            "width": self._last_region.width,
+            "height": self._last_region.height,
+        }
+        screenshot = self._sct.grab(bbox)
         frame = np.array(screenshot)
         return cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
 
@@ -229,6 +267,7 @@ class Vision:
         threshold: float | None = None,
         compare_size: tuple[int, int] = (320, 180),
         screen: np.ndarray | None = None,
+        region: SearchRegion | None = None,
     ) -> MatchResult:
         """画面全体と参照画像の類似度を比較（フルスクリーンテンプレート用）"""
         threshold = self.threshold if threshold is None else threshold
@@ -238,18 +277,33 @@ class Vision:
 
         if screen is None:
             screen = self.capture_screen()
-        score = self._screen_similarity(screen, reference, compare_size)
+        score = self._screen_similarity(screen, reference, compare_size, region=region)
         found = score >= threshold
         if found:
             detail_log.debug("画面一致: %s (類似度: %.2f)", reference_path, score)
         return MatchResult(found, score, 0, 0, (0, 0), (0, 0))
 
     @staticmethod
+    def _crop_region(image: np.ndarray, region: SearchRegion) -> np.ndarray:
+        height, width = image.shape[:2]
+        x1 = max(0, int(width * region[0]))
+        y1 = max(0, int(height * region[1]))
+        x2 = min(width, int(width * region[2]))
+        y2 = min(height, int(height * region[3]))
+        if x2 <= x1 or y2 <= y1:
+            return image
+        return image[y1:y2, x1:x2]
+
+    @staticmethod
     def _screen_similarity(
         screen: np.ndarray,
         reference: np.ndarray,
         size: tuple[int, int],
+        region: SearchRegion | None = None,
     ) -> float:
+        if region is not None:
+            screen = Vision._crop_region(screen, region)
+            reference = Vision._crop_region(reference, region)
         s = cv2.resize(screen, size).astype(np.float32)
         r = cv2.resize(reference, size).astype(np.float32)
         s = (s - s.mean()) / (s.std() + 1e-6)

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .display import get_monitor
+from .capture import CaptureSettings, resolve_capture_region
 
 
 @dataclass
@@ -27,9 +27,16 @@ class UiPositions:
     accept_network_failure: Point
     join_mods: Point | None = None
     monitor_index: int = 1
+    capture_settings: CaptureSettings | None = None
 
     @classmethod
-    def from_dict(cls, data: dict, monitor_index: int = 1) -> UiPositions:
+    def from_dict(
+        cls,
+        data: dict,
+        monitor_index: int = 1,
+        *,
+        capture_settings: CaptureSettings | None = None,
+    ) -> UiPositions:
         def point(key: str, fallback_key: str | None = None, default: tuple[float, float] = (0, 0)) -> Point:
             src = data.get(key) or (data.get(fallback_key) if fallback_key else None) or {}
             return Point(
@@ -45,23 +52,28 @@ class UiPositions:
                 y_percent=float(join_mods.get("y_percent", 0)),
             )
 
+        settings = capture_settings or CaptureSettings(monitor_index=monitor_index)
+
         return cls(
             join_server_list=point("join_server_list", "join_button", (92.0, 92.0)),
             join_mods=join_mods_point,
             cancel_failed=point("cancel_failed", default=(55.0, 55.0)),
-            accept_network_failure=point("accept_network_failure", default=(0.0, 0.0)),
+            accept_network_failure=point("accept_network_failure", default=(50.0, 60.0)),
             back_empty_list=point("back_empty_list", default=(5.0, 92.0)),
             join_game=point("join_game", default=(29.0, 91.0)),
             monitor_index=monitor_index,
+            capture_settings=settings,
         )
 
-    def is_configured(self) -> bool:
-        required = (
+    def is_configured(self, *, coordinates_only: bool = False) -> bool:
+        required: tuple[Point, ...] = (
             self.join_server_list,
             self.cancel_failed,
             self.back_empty_list,
             self.join_game,
         )
+        if coordinates_only:
+            required = required + (self.accept_network_failure,)
         return all(p.x_percent > 0 and p.y_percent > 0 for p in required)
 
     def has_point(self, key: str) -> bool:
@@ -83,16 +95,24 @@ class UiPositions:
         return points
 
     def get_screen_size(self) -> tuple[int, int]:
-        monitor = get_monitor(self.monitor_index)
-        return monitor.width, monitor.height
+        region = resolve_capture_region(
+            self._capture_settings(),
+            strict_window=self._capture_settings().mode == "window",
+        )
+        return region.width, region.height
 
     def click_pixels(self, point: Point) -> tuple[int, int]:
-        w, h = self.get_screen_size()
-        return self.to_absolute(*point.to_pixels(w, h))
+        region = resolve_capture_region(
+            self._capture_settings(),
+            strict_window=self._capture_settings().mode == "window",
+        )
+        rel_x, rel_y = point.to_pixels(region.width, region.height)
+        return region.to_absolute(rel_x, rel_y)
 
-    def to_absolute(self, x: int, y: int) -> tuple[int, int]:
-        monitor = get_monitor(self.monitor_index)
-        return monitor.left + x, monitor.top + y
+    def _capture_settings(self) -> CaptureSettings:
+        if self.capture_settings is not None:
+            return self.capture_settings
+        return CaptureSettings(monitor_index=self.monitor_index)
 
     def to_dict(self) -> dict:
         data = {

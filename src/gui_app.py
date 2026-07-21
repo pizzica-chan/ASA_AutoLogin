@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 import queue
 import sys
@@ -16,10 +17,19 @@ from PIL import Image, ImageTk
 from .app_logging import CHANNEL_DETAIL, CHANNEL_USER, setup_logging, teardown_logging, user_log
 
 from .app_service import (
+    CAPTURE_MODE_LABEL_TO_VALUE,
+    CAPTURE_MODE_OPTIONS,
+    CAPTURE_MODE_VALUE_TO_LABEL,
     CLICK_MODE_LABEL_TO_VALUE,
     CLICK_MODE_OPTIONS,
     CLICK_MODE_VALUE_TO_LABEL,
     MATCHING_FIELDS,
+    MODS_DETECT_MODE_LABEL_TO_VALUE,
+    MODS_DETECT_MODE_OPTIONS,
+    MODS_DETECT_MODE_VALUE_TO_LABEL,
+    MODS_SCREEN_REGION_LABEL_TO_VALUE,
+    MODS_SCREEN_REGION_OPTIONS,
+    MODS_SCREEN_REGION_VALUE_TO_LABEL,
     RETRY_TIMING_FIELDS,
     STATE_LABELS,
     UI_CLICK_FIELDS,
@@ -27,13 +37,15 @@ from .app_service import (
     apply_ui_overrides,
     build_automator,
     load_config,
+    load_default_config,
     save_config,
 )
+from .capture import CaptureSettings, DEFAULT_CAPTURE_MODE, WindowNotFoundError, resolve_capture_region
 from .coordinate_preview import pick_coordinate_on_screen, show_coordinate_preview
 from .display import list_monitors
 from .login_flow import LoginState
-from .paths import bundle_root, prepare_runtime
-from .setup_wizard import run_wizard_gui
+from .paths import app_root, bundle_root, prepare_runtime
+from .setup_wizard import SETUP_CAPTURE_VERSION, run_wizard_gui
 
 START_SAMPLE_IMAGE = bundle_root() / "docs" / "setup_samples" / "01_server_list.png"
 
@@ -61,8 +73,9 @@ OPERATION_NOTES = """【動作前の準備】
 • サーバー一覧で JOIN →（必要なら）MODS で JOIN → ログイン待ち
 • 失敗したら CANCEL や BACK で戻り、自動で再試行します
 
-【サブモニター運用】
+【サブモニター・キャプチャ範囲】
 • ARK をサブモニターに表示し「ARKモニター」で選択
+• 「キャプチャ範囲」は通常「ゲームウィンドウ」（推奨）。変更後はセットアップ再実行
 • 操作時に ARK が一瞬前面に出ます
 
 【待機時間】
@@ -84,7 +97,8 @@ OPERATION_NOTES = """【動作前の準備】
 • ファイル: logs/asa_login_user.log / logs/asa_login_detail.log
 
 【その他】
-• 解像度・モニター変更時は再セットアップが必要
+• 解像度・モニター・キャプチャ範囲変更時は再セットアップが必要
+• 以前のバージョンで保存した画面キャプチャは色がずれている場合がある → 再セットアップを推奨
 • 利用規約に違反する可能性があります。自己責任でご使用ください"""
 
 
@@ -208,14 +222,21 @@ class LoginApp(tk.Tk):
         self._ui_coord_vars: dict[str, tuple[tk.DoubleVar, tk.DoubleVar]] = {}
         self._start_config: dict = {}
         self.click_mode_var = tk.StringVar(value=CLICK_MODE_OPTIONS[0][1])
+        self.mods_detect_mode_var = tk.StringVar(value=MODS_DETECT_MODE_OPTIONS[0][1])
+        self.mods_screen_region_var = tk.StringVar(value=MODS_SCREEN_REGION_OPTIONS[0][1])
+        self.capture_mode_var = tk.StringVar(value=CAPTURE_MODE_OPTIONS[0][1])
         self.window_title_var = tk.StringVar()
         self.bring_to_front_var = tk.BooleanVar(value=True)
+        self._capture_mode_trace_guard = False
+        self._disk_capture_mode = DEFAULT_CAPTURE_MODE
 
         self._setup_styles()
         self._build_ui()
         self._load_settings()
+        self.capture_mode_var.trace_add("write", self._on_capture_mode_changed)
         self._poll_queue()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.after(300, self._show_startup_notices)
 
     def _setup_styles(self) -> None:
         style = ttk.Style(self)
@@ -335,6 +356,7 @@ class LoginApp(tk.Tk):
         self.stop_btn = ttk.Button(btn_row, text="■  停止", style="Danger.TButton", command=self._on_stop, state=tk.DISABLED)
         self.stop_btn.pack(side=tk.LEFT, padx=(0, 8))
         ttk.Button(btn_row, text="設定を保存", command=self._on_save).pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Button(btn_row, text="初期値に戻す", command=self._on_reset_defaults).pack(side=tk.LEFT, padx=(0, 8))
         ttk.Button(btn_row, text="セットアップ", command=self._on_setup).pack(side=tk.RIGHT)
 
         log_card = self._card(main, "ログ")
@@ -417,6 +439,43 @@ class LoginApp(tk.Tk):
             font=("Segoe UI", 10),
         )
         monitor_menu.pack(side=tk.LEFT, ipady=2)
+
+        capture_row = ttk.Frame(display_card, style="Card.TFrame")
+        capture_row.pack(fill=tk.X, pady=3)
+        ttk.Label(capture_row, text="キャプチャ範囲", style="Card.TLabel", width=28).pack(side=tk.LEFT)
+        capture_menu = tk.OptionMenu(
+            capture_row,
+            self.capture_mode_var,
+            *[label for _value, label in CAPTURE_MODE_OPTIONS],
+        )
+        capture_menu.configure(
+            bg=COLORS["surface2"],
+            fg=COLORS["text"],
+            activebackground=COLORS["accent"],
+            activeforeground="#ffffff",
+            highlightthickness=1,
+            highlightbackground=COLORS["border"],
+            highlightcolor=COLORS["accent"],
+            relief=tk.FLAT,
+            font=("Segoe UI", 10),
+            width=24,
+        )
+        capture_menu["menu"].configure(
+            bg=COLORS["surface2"],
+            fg=COLORS["text"],
+            activebackground=COLORS["accent"],
+            activeforeground="#ffffff",
+            relief=tk.FLAT,
+            font=("Segoe UI", 10),
+        )
+        capture_menu.pack(side=tk.LEFT, ipady=2)
+        ttk.Label(
+            display_card,
+            text="「ゲームウィンドウ」は ARK の描画領域のみを対象にします。モード変更後はセットアップの再実行を推奨します。",
+            style="CardDim.TLabel",
+            wraplength=560,
+            justify=tk.LEFT,
+        ).pack(anchor=tk.W, pady=(0, 6))
 
         retry_card = self._card(parent, "リトライ")
         retry_grid = ttk.Frame(retry_card, style="Card.TFrame")
@@ -518,6 +577,43 @@ class LoginApp(tk.Tk):
             ).grid(row=row, column=2, sticky=tk.NW, padx=(8, 0), pady=6)
             row += 1
 
+    def _add_option_row(
+        self,
+        parent: ttk.Frame,
+        label: str,
+        variable: tk.StringVar,
+        options: tuple[tuple[str, str], ...],
+        *,
+        help_text: str = "",
+    ) -> None:
+        row_frame = ttk.Frame(parent, style="Card.TFrame")
+        row_frame.pack(fill=tk.X, pady=6)
+        label_col = ttk.Frame(row_frame, style="Card.TFrame")
+        label_col.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 12))
+        ttk.Label(label_col, text=label, style="Card.TLabel", wraplength=260, justify=tk.LEFT).pack(anchor=tk.W)
+        if help_text:
+            ttk.Label(
+                label_col,
+                text=help_text,
+                style="CardDim.TLabel",
+                wraplength=360,
+                justify=tk.LEFT,
+                font=("Segoe UI", 9),
+            ).pack(anchor=tk.W, pady=(2, 0))
+
+        option_menu = tk.OptionMenu(row_frame, variable, *[opt_label for _opt_value, opt_label in options])
+        option_menu.configure(
+            bg=COLORS["surface2"],
+            fg=COLORS["text"],
+            activebackground=COLORS["accent"],
+            activeforeground="#ffffff",
+            highlightthickness=1,
+            highlightbackground=COLORS["border"],
+            width=28,
+        )
+        option_menu["menu"].configure(bg=COLORS["surface2"], fg=COLORS["text"])
+        option_menu.pack(side=tk.RIGHT, anchor=tk.N)
+
     def _build_timing_tab(self, parent: ttk.Frame) -> None:
         intro = ttk.Label(
             parent,
@@ -543,6 +639,25 @@ class LoginApp(tk.Tk):
         scroll_body = self._build_scrollable_tab(parent)
         matching_card = self._card(scroll_body, "画像認識の感度")
         self._add_numeric_setting_rows(matching_card, MATCHING_FIELDS, self._matching_vars)
+
+        mods_card = self._card(scroll_body, "② MODS 画面の検出")
+        self._add_option_row(
+            mods_card,
+            "検出方式",
+            self.mods_detect_mode_var,
+            MODS_DETECT_MODE_OPTIONS,
+            help_text=(
+                "ハイブリッド（推奨）: 画面テンプレートで判定し、弱い場合は JOIN ボタン画像でも確認。"
+                "座標のみモードでもクリックは座標のままです。"
+            ),
+        )
+        self._add_option_row(
+            mods_card,
+            "画面比較範囲",
+            self.mods_screen_region_var,
+            MODS_SCREEN_REGION_OPTIONS,
+            help_text="中央モーダル（推奨）: 背景のサーバー一覧の差を無視して MODS 本体だけ比較します。",
+        )
 
         window_card = self._card(scroll_body, "ウィンドウ")
         title_row = ttk.Frame(window_card, style="Card.TFrame")
@@ -651,7 +766,7 @@ class LoginApp(tk.Tk):
 
         ttk.Label(
             coord_card,
-            text="左上が (0, 0)、右下が (100, 100) です。「画面で設定」は ARK を表示しているモニター上でクリックしてください。",
+            text="左上が (0, 0)、右下が (100, 100) です。％はキャプチャ範囲（ゲームウィンドウまたはモニター）基準です。",
             style="CardDim.TLabel",
             wraplength=560,
             justify=tk.LEFT,
@@ -682,15 +797,20 @@ class LoginApp(tk.Tk):
         return ui
 
     def _on_preview_coordinates(self) -> None:
+        capture_settings = self._get_capture_settings()
         points: list[tuple[str, float, float]] = []
         for field in UI_CLICK_FIELDS:
             x_var, y_var = self._ui_coord_vars[field.key]
             points.append((field.label, float(x_var.get()), float(y_var.get())))
-        show_coordinate_preview(
-            self,
-            monitor_index=self._get_monitor_index(),
-            points=points,
-        )
+        try:
+            show_coordinate_preview(
+                self,
+                capture_settings=capture_settings,
+                points=points,
+                bring_to_front=bool(self.bring_to_front_var.get()),
+            )
+        except WindowNotFoundError as exc:
+            messagebox.showerror("ウィンドウ未検出", str(exc), parent=self)
 
     def _on_pick_ui_coordinate(self, key: str, label: str) -> None:
         if self._running:
@@ -704,12 +824,16 @@ class LoginApp(tk.Tk):
             y_var.set(y_percent)
             self._append_log(f"{label} の座標を設定しました ({x_percent:.1f}%, {y_percent:.1f}%)")
 
-        pick_coordinate_on_screen(
-            self,
-            monitor_index=self._get_monitor_index(),
-            label=label,
-            on_pick=on_pick,
-        )
+        try:
+            pick_coordinate_on_screen(
+                self,
+                capture_settings=self._get_capture_settings(),
+                label=label,
+                on_pick=on_pick,
+                bring_to_front=bool(self.bring_to_front_var.get()),
+            )
+        except WindowNotFoundError as exc:
+            messagebox.showerror("ウィンドウ未検出", str(exc), parent=self)
 
     def _append_log(self, message: str, channel: str = CHANNEL_USER) -> None:
         widget = self.user_log_text if channel == CHANNEL_USER else self.detail_log_text
@@ -728,10 +852,18 @@ class LoginApp(tk.Tk):
 
     def _load_settings(self) -> None:
         try:
-            self._config = load_config()
+            self._apply_config_to_form(load_config())
         except FileNotFoundError:
-            self._append_log("設定ファイルが見つかりません。セットアップを実行してください。")
-            return
+            try:
+                self._apply_config_to_form(load_default_config())
+                self._append_log("設定ファイルが見つかりません。初期値を表示しています。")
+            except FileNotFoundError:
+                self._append_log("設定ファイルが見つかりません。セットアップを実行してください。")
+                return
+        self._mark_config_saved()
+
+    def _apply_config_to_form(self, config: dict) -> None:
+        self._config = copy.deepcopy(config)
 
         retry = self._config.get("retry", {})
         display = self._config.get("display", {})
@@ -743,6 +875,17 @@ class LoginApp(tk.Tk):
         label = self._monitor_index_to_label.get(monitor_index)
         if label:
             self.monitor_var.set(label)
+
+        capture_mode = display.get("capture_mode", DEFAULT_CAPTURE_MODE)
+        self._capture_mode_trace_guard = True
+        try:
+            self.capture_mode_var.set(
+                CAPTURE_MODE_VALUE_TO_LABEL.get(capture_mode, CAPTURE_MODE_OPTIONS[0][1])
+            )
+        finally:
+            self._capture_mode_trace_guard = False
+        self._disk_capture_mode = capture_mode
+
         self.max_attempts_var.set(retry.get("max_attempts", 0))
         self.delay_var.set(retry.get("delay_seconds", 3.0))
 
@@ -761,6 +904,15 @@ class LoginApp(tk.Tk):
         click_mode = matching.get("click_mode", "image")
         self.click_mode_var.set(CLICK_MODE_VALUE_TO_LABEL.get(click_mode, CLICK_MODE_OPTIONS[0][1]))
 
+        mods_detect_mode = matching.get("mods_detect_mode", "hybrid")
+        self.mods_detect_mode_var.set(
+            MODS_DETECT_MODE_VALUE_TO_LABEL.get(mods_detect_mode, MODS_DETECT_MODE_OPTIONS[0][1])
+        )
+        mods_screen_region = matching.get("mods_screen_region", "center")
+        self.mods_screen_region_var.set(
+            MODS_SCREEN_REGION_VALUE_TO_LABEL.get(mods_screen_region, MODS_SCREEN_REGION_OPTIONS[0][1])
+        )
+
         self.window_title_var.set(window.get("title_contains", "ARK: Survival Ascended"))
         self.bring_to_front_var.set(bool(window.get("bring_to_front", True)))
 
@@ -770,7 +922,99 @@ class LoginApp(tk.Tk):
             x_var.set(float(entry.get("x_percent", field.default_x)))
             y_var.set(float(entry.get("y_percent", field.default_y)))
 
-        self._mark_config_saved()
+    def _has_setup_templates(self) -> bool:
+        return (app_root() / "templates" / "server_list.png").exists()
+
+    def _show_startup_notices(self) -> None:
+        if not self._has_setup_templates():
+            return
+        version = int(self._config.get("meta", {}).get("setup_capture_version", 0))
+        if version >= SETUP_CAPTURE_VERSION:
+            return
+        messagebox.showinfo(
+            "セットアップ画像の再登録を推奨",
+            "以前のバージョンで保存した画面キャプチャが検出されました。\n\n"
+            "色の保存方法が修正されたため、templates/ の画像が実画面と色味が大きく"
+            "違う場合は「セットアップ」から再キャプチャしてください。\n\n"
+            "再セットアップ後はこの通知は表示されません。",
+            parent=self,
+        )
+        self._append_log(
+            "以前のセットアップ画像を検出しました。色ずれがある場合は再セットアップを推奨します。"
+        )
+
+    def _on_capture_mode_changed(self, *_args) -> None:
+        if self._capture_mode_trace_guard:
+            return
+        new_mode = CAPTURE_MODE_LABEL_TO_VALUE.get(
+            self.capture_mode_var.get(),
+            DEFAULT_CAPTURE_MODE,
+        )
+        if new_mode == self._disk_capture_mode or not self._has_setup_templates():
+            return
+        current_label = CAPTURE_MODE_VALUE_TO_LABEL.get(new_mode, new_mode)
+        saved_label = CAPTURE_MODE_VALUE_TO_LABEL.get(self._disk_capture_mode, self._disk_capture_mode)
+        messagebox.showwarning(
+            "キャプチャ範囲の変更",
+            f"キャプチャ範囲を「{current_label}」に変更しました。\n"
+            f"（保存済み: {saved_label}）\n\n"
+            "座標と画面テンプレートの基準が変わるため、"
+            "「セットアップ」から再キャプチャすることを推奨します。\n\n"
+            "変更を確定するには「設定を保存」を押してください。",
+            parent=self,
+        )
+        self._append_log(
+            f"キャプチャ範囲を変更しました（{current_label}）。再セットアップを推奨します。"
+        )
+
+    def _confirm_capture_mode_matches_setup(self, capture_settings: CaptureSettings) -> bool:
+        setup_mode = self._config.get("meta", {}).get("setup_capture_mode")
+        if not setup_mode or not self._has_setup_templates():
+            return True
+        if capture_settings.mode == setup_mode:
+            return True
+        current_label = CAPTURE_MODE_VALUE_TO_LABEL.get(capture_settings.mode, capture_settings.mode)
+        setup_label = CAPTURE_MODE_VALUE_TO_LABEL.get(setup_mode, setup_mode)
+        return messagebox.askyesno(
+            "キャプチャ範囲がセットアップ時と異なります",
+            f"現在: {current_label}\nセットアップ時: {setup_label}\n\n"
+            "このまま開始すると画面判定やクリック位置がずれる可能性があります。\n"
+            "「セットアップ」の再実行を推奨します。\n\n"
+            "このまま開始しますか？",
+            parent=self,
+        )
+
+    def _on_reset_defaults(self) -> None:
+        if self._running:
+            messagebox.showwarning(
+                "実行中",
+                "自動ログイン実行中は設定を変更できません。",
+                parent=self,
+            )
+            return
+
+        if not messagebox.askyesno(
+            "初期値に戻す",
+            "config.yaml の設定を config.example.yaml の初期値に戻します。\n\n"
+            "• templates/ の画像ファイルは削除されません\n"
+            "• セットアップで登録した座標も初期値に戻ります\n\n"
+            "よろしいですか？",
+            parent=self,
+        ):
+            return
+
+        try:
+            self._apply_config_to_form(load_default_config())
+            self._persist_config()
+            self._append_log("設定を初期値に戻しました")
+            messagebox.showinfo(
+                "完了",
+                "設定を初期値に戻し、config.yaml に保存しました。\n"
+                "templates/ の画像はそのまま残っています。",
+                parent=self,
+            )
+        except Exception as exc:
+            messagebox.showerror("エラー", f"初期値への復元に失敗しました:\n{exc}", parent=self)
 
     def _config_snapshot(self, config: dict) -> str:
         return json.dumps(config, sort_keys=True, ensure_ascii=False, default=str)
@@ -787,6 +1031,8 @@ class LoginApp(tk.Tk):
         self._config = self._get_form_config()
         save_config(self._config)
         self._mark_config_saved()
+        display = self._config.get("display", {})
+        self._disk_capture_mode = display.get("capture_mode", DEFAULT_CAPTURE_MODE)
 
     def _on_close(self) -> None:
         if self._running:
@@ -834,6 +1080,16 @@ class LoginApp(tk.Tk):
             matching[field.key] = float(self._matching_vars[field.key].get())
         click_label = self.click_mode_var.get()
         matching["click_mode"] = CLICK_MODE_LABEL_TO_VALUE.get(click_label, "image")
+        mods_detect_label = self.mods_detect_mode_var.get()
+        matching["mods_detect_mode"] = MODS_DETECT_MODE_LABEL_TO_VALUE.get(
+            mods_detect_label,
+            "hybrid",
+        )
+        mods_region_label = self.mods_screen_region_var.get()
+        matching["mods_screen_region"] = MODS_SCREEN_REGION_LABEL_TO_VALUE.get(
+            mods_region_label,
+            "center",
+        )
         return matching
 
     def _collect_window(self) -> dict[str, str | bool]:
@@ -845,12 +1101,22 @@ class LoginApp(tk.Tk):
     def _get_monitor_index(self) -> int:
         return self._monitor_label_to_index.get(self.monitor_var.get(), 1)
 
+    def _get_capture_settings(self) -> CaptureSettings:
+        capture_label = self.capture_mode_var.get()
+        return CaptureSettings(
+            mode=CAPTURE_MODE_LABEL_TO_VALUE.get(capture_label, "window"),
+            monitor_index=self._get_monitor_index(),
+            window_title=self.window_title_var.get().strip() or "ARK: Survival Ascended",
+        )
+
     def _get_form_config(self) -> dict:
+        capture_label = self.capture_mode_var.get()
         return apply_ui_overrides(
             self._config,
             max_attempts=int(self.max_attempts_var.get()),
             delay_seconds=float(self.delay_var.get()),
             monitor_index=self._get_monitor_index(),
+            capture_mode=CAPTURE_MODE_LABEL_TO_VALUE.get(capture_label, "window"),
             retry_timing=self._collect_retry_timing(),
             matching_overrides=self._collect_matching(),
             window_overrides=self._collect_window(),
@@ -866,13 +1132,40 @@ class LoginApp(tk.Tk):
             messagebox.showerror("エラー", f"設定の保存に失敗しました:\n{exc}")
 
     def _on_setup(self) -> None:
+        if self._running:
+            messagebox.showwarning(
+                "実行中",
+                "自動ログイン実行中はセットアップできません。",
+                parent=self,
+            )
+            return
+
+        if self._has_unsaved_changes():
+            if not messagebox.askyesno(
+                "未保存の設定",
+                "GUI に未保存の変更があります。\n\n"
+                "セットアップ完了時に、現在のフォーム内容とセットアップ結果を\n"
+                "まとめて config.yaml に保存します。続行しますか？",
+                parent=self,
+            ):
+                return
+
         default_monitor = self._get_monitor_index()
+        capture_settings = self._get_capture_settings()
+        base_config = self._get_form_config()
 
         def on_complete() -> None:
             self._load_settings()
-            self._append_log("セットアップが完了しました")
+            self._mark_config_saved()
+            self._append_log("セットアップが完了しました（設定も保存済み）")
 
-        run_wizard_gui(self, default_monitor_index=default_monitor, on_complete=on_complete)
+        run_wizard_gui(
+            self,
+            default_monitor_index=default_monitor,
+            capture_settings=capture_settings,
+            base_config=base_config,
+            on_complete=on_complete,
+        )
 
     def _on_state_change(self, state: LoginState, stats) -> None:
         self._log_queue.put(("state", state, stats))
@@ -884,6 +1177,17 @@ class LoginApp(tk.Tk):
         dialog = StartReadyDialog(self)
         self.wait_window(dialog)
         if not dialog.confirmed:
+            return
+
+        capture_settings = self._get_capture_settings()
+        if capture_settings.mode == "window":
+            try:
+                resolve_capture_region(capture_settings, strict_window=True)
+            except WindowNotFoundError as exc:
+                messagebox.showerror("ウィンドウ未検出", str(exc), parent=self)
+                return
+
+        if not self._confirm_capture_mode_matches_setup(capture_settings):
             return
 
         try:
@@ -925,6 +1229,12 @@ class LoginApp(tk.Tk):
 
             result = self._automator.run()
             self._log_queue.put(("result", result))
+        except WindowNotFoundError as exc:
+            from .app_logging import detail_log
+
+            detail_log.error("ARK ウィンドウが見つかりません: %s", exc)
+            user_log.error("ARK ウィンドウが見つかりません")
+            self._log_queue.put(("error", str(exc)))
         except Exception as exc:
             from .app_logging import detail_log
 
