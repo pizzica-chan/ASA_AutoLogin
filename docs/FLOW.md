@@ -160,12 +160,12 @@ ARK: Survival Ascended のサーバー参加を自動化する際の画面遷移
 | 用途 | 方式 |
 |------|------|
 | **画面状態の判定**（①〜⑦・成功） | 画面全体キャプチャと `templates/*.png` の類似度比較 |
-| **ボタンクリック** | `assets/defaults/buttons/*.png`（同梱サンプル）を画面上から検索してクリック |
+| **ボタンクリック** | `templates/buttons/*.png`（exe 横・差し替え可）を画面上から検索してクリック |
 | **フォールバック** | ボタン画像が見つからない場合、`config.yaml` の `ui` 座標でクリック |
 
 - 画面判定の閾値: `matching.screen_threshold`（デフォルト `0.75`）
 - ボタン検索の閾値: `matching.button_threshold`（デフォルト `0.75`）
-- ボタン画像は **同梱サンプル**（`assets/defaults/buttons/`）を使用。セットアップではクリック**座標**のみ登録
+- ボタン画像は **exe 横の `templates/buttons/`** に配置。初回起動時に同梱サンプルをコピーし、同じファイル名で PNG を差し替え可能
 
 ## セットアップとの対応
 
@@ -174,7 +174,7 @@ ARK: Survival Ascended のサーバー参加を自動化する際の画面遷移
 | 項目 | 内容 |
 |------|------|
 | **ユーザーが撮る画面** | ① サーバー一覧のみ |
-| **同梱デフォルト** | CANCEL / BACK / MODS JOIN などのボタン画像（`assets/defaults/`） |
+| **同梱デフォルト** | CANCEL / BACK / MODS JOIN などのボタン画像（初回に `templates/buttons/` へコピー） |
 | **エラー画面キャプチャ** | **不要**（ボタン出現でエラーを検出） |
 
 ### フルセットアップ
@@ -187,7 +187,7 @@ ARK: Survival Ascended のサーバー参加を自動化する際の画面遷移
 | ② | `required_mods.png` | `buttons/join_mods.png` | `02_required_mods.png` |
 | ③-A | `connection_failed.png` | `buttons/cancel_failed.png` | `03a_connection_failed.png` |
 | ④ | `server_list_empty.png` | `buttons/back_empty_list.png` | — |
-| ⑤ | `main_menu.png` | `buttons/join_game.png` | `04_main_menu.png` |
+| ⑤ | `main_menu.png` | `buttons/join_game.png`（④枚） / `join_game_center.png`（⑤枚） | `04_main_menu_4tiles.png` / `04_main_menu.png` |
 | ⑥ | `network_failure.png` | `buttons/accept_network_failure.png` | `05_network_failure.png` |
 
 GUI を起動して **「セットアップ」** ボタンを押す（`python gui.py`）。コマンドラインでの操作は不要です。

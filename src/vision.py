@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -10,9 +9,8 @@ import cv2
 import mss
 import numpy as np
 
+from .app_logging import detail_log
 from .display import MonitorInfo, get_monitor
-
-logger = logging.getLogger(__name__)
 
 # 画面内の矩形（幅・高さに対する比率 0.0〜1.0）
 SearchRegion = tuple[float, float, float, float]
@@ -38,7 +36,7 @@ class Vision:
     def set_monitor(self, monitor_index: int) -> None:
         self.monitor_index = monitor_index
         self._monitor = get_monitor(monitor_index)
-        logger.info("キャプチャモニターを変更: %s", self._monitor.label)
+        detail_log.info("キャプチャモニターを変更: %s", self._monitor.label)
 
     @property
     def monitor(self) -> MonitorInfo:
@@ -61,11 +59,11 @@ class Vision:
             return cached[cache_key]
 
         if not template_path.exists():
-            logger.warning("テンプレートが見つかりません: %s", template_path)
+            detail_log.warning("テンプレートが見つかりません: %s", template_path)
             return None
         template = cv2.imread(str(template_path), cv2.IMREAD_COLOR)
         if template is None:
-            logger.warning("テンプレートの読み込みに失敗: %s", template_path)
+            detail_log.warning("テンプレートの読み込みに失敗: %s", template_path)
             return None
 
         if not hasattr(self, "_template_cache"):
@@ -243,7 +241,7 @@ class Vision:
         score = self._screen_similarity(screen, reference, compare_size)
         found = score >= threshold
         if found:
-            logger.debug("画面一致: %s (類似度: %.2f)", reference_path, score)
+            detail_log.debug("画面一致: %s (類似度: %.2f)", reference_path, score)
         return MatchResult(found, score, 0, 0, (0, 0), (0, 0))
 
     @staticmethod

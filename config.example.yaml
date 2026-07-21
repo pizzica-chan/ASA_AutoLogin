@@ -1,29 +1,32 @@
 # ASA_Login 設定ファイル
 
 display:
-  monitor_index: 1
+  monitor_index: 1  # ARK を表示しているモニター（1 始まり）
 
 retry:
-  max_attempts: 0
-  delay_seconds: 3.0
-  poll_interval: 0.5        # UI 検出の間隔（短いほど表示後すぐ反応）
-  transition_settle: 0.4    # ボタン検出後、クリック前の安定待ち（秒）
-  after_click_delay: 2.0     # クリック後の画面遷移待ち（秒）
-  transition_timeout: 20.0   # 次の UI が出るまでの最大待機（秒）
+  max_attempts: 0          # 最大試行回数（0 = 無制限）
+  delay_seconds: 3.0       # 失敗後、①に戻ってから次の試行までの待ち（秒）
+  poll_interval: 0.5       # 画面・ボタン状態のチェック間隔
+  transition_settle: 0.4   # ボタン検出後、クリック前の安定待ち
+  after_click_delay: 2.0   # クリック後の画面遷移待ち
+  transition_timeout: 20.0 # 次の UI が出るまでの最大待機
   join_click_delay: 1.5      # 後方互換（after_click_delay 優先）
   check_interval: 0.5        # 後方互換（poll_interval 優先）
-  result_timeout: 120.0        # ③ ログイン試行の待機（秒）
-  login_movie_timeout: 120.0   # ムービー検出後の成功/失敗判定待ち（秒）
-  mods_wait_seconds: 8.0
-  recovery_timeout: 45.0
-  stuck_server_list_seconds: 30.0
+  result_timeout: 120.0        # ③ ログイン結果の最大待ち
+  login_movie_timeout: 120.0   # ③ ログイン動画の追加待ち
+  mods_wait_seconds: 8.0       # ② MODS 画面の確認時間
+  recovery_timeout: 45.0       # 失敗後の画面復帰待ち（上限）
+  stuck_server_list_seconds: 30.0  # ③ 停滞とみなす時間
   start_countdown_seconds: 3
 
 matching:
-  threshold: 0.8
-  screen_threshold: 0.75
-  button_threshold: 0.75
-  click_mode: image  # image=画像優先(見つかったら必ず画像クリック) | image_only=画像のみ | coordinates=座標優先
+  threshold: 0.8               # 汎用しきい値（後方互換）
+  screen_threshold: 0.75       # 画面全体の一致度
+  button_threshold: 0.75       # ボタン画像の一致度
+  button_threshold_relaxed: 0.68 # ボタン再検索時の緩い一致度
+  mods_screen_threshold: 0.55  # ② MODS 画面の一致度
+  screen_ready_margin: 0.05    # ① 復帰判定のゆるさ
+  click_mode: image  # image | image_only | coordinates | coordinates_only
 
 # 画面全体キャプチャ（① はセットアップで登録。他は同梱デフォルトで補完）
 templates:
@@ -37,7 +40,7 @@ templates:
   main_menu: templates/main_menu.png
   in_game: templates/in_game.png
 
-# 座標フォールバック（ボタン画像は assets/defaults/buttons の同梱サンプルを使用）
+# 座標フォールバック（ボタン画像は templates/buttons/ の PNG を使用・差し替え可）
 ui:
   join_server_list:
     x_percent: 92.0
@@ -55,13 +58,15 @@ ui:
     x_percent: 5.0
     y_percent: 92.0
   join_game:
-    x_percent: 50.0
-    y_percent: 50.0
+    x_percent: 29.0
+    y_percent: 91.0
 
 window:
   title_contains: "ARK: Survival Ascended"
   bring_to_front: true
 
 logging:
-  level: INFO
-  file: logs/asa_login.log
+  user_file: logs/asa_login_user.log
+  detail_file: logs/asa_login_detail.log
+  user_level: INFO
+  detail_level: DEBUG

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 import random
 import time
 
@@ -10,7 +9,7 @@ import pydirectinput
 import win32con
 import win32gui
 
-logger = logging.getLogger(__name__)
+from .app_logging import detail_log, user_log
 
 pydirectinput.PAUSE = 0.05
 pydirectinput.FAILSAFE = True
@@ -26,19 +25,19 @@ def click(x: int, y: int, button: str = "left") -> None:
     pydirectinput.moveTo(x + offset_x, y + offset_y)
     human_delay(0.05, 0.15)
     pydirectinput.click(x + offset_x, y + offset_y, button=button)
-    logger.debug("クリック: (%d, %d)", x + offset_x, y + offset_y)
+    detail_log.debug("クリック: (%d, %d)", x + offset_x, y + offset_y)
 
 
 def press_key(key: str) -> None:
     human_delay(0.05, 0.1)
     pydirectinput.press(key)
-    logger.debug("キー押下: %s", key)
+    detail_log.debug("キー押下: %s", key)
 
 
 def hotkey(*keys: str) -> None:
     human_delay(0.05, 0.1)
     pydirectinput.hotkey(*keys)
-    logger.debug("ホットキー: %s", "+".join(keys))
+    detail_log.debug("ホットキー: %s", "+".join(keys))
 
 
 def find_window(title_contains: str) -> int | None:
@@ -58,7 +57,7 @@ def find_window(title_contains: str) -> int | None:
 def bring_window_to_front(title_contains: str) -> bool:
     hwnd = find_window(title_contains)
     if hwnd is None:
-        logger.warning("ウィンドウが見つかりません: %s", title_contains)
+        detail_log.warning("ウィンドウが見つかりません: %s", title_contains)
         return False
 
     if win32gui.IsIconic(hwnd):
@@ -71,5 +70,5 @@ def bring_window_to_front(title_contains: str) -> bool:
         win32gui.BringWindowToTop(hwnd)
 
     human_delay(0.3, 0.5)
-    logger.info("ウィンドウを前面に表示: %s", title_contains)
+    detail_log.info("ウィンドウを前面に表示: %s", title_contains)
     return True

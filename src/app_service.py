@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Literal
 
 import yaml
 
@@ -18,6 +19,29 @@ CONFIG_PATH = app_root() / "config.yaml"
 EXAMPLE_CONFIG_PATH = app_root() / "config.example.yaml"
 BUNDLED_EXAMPLE_CONFIG_PATH = bundle_root() / "config.example.yaml"
 
+CLICK_MODE_COORDINATES_ONLY = "coordinates_only"
+
+
+@dataclass(frozen=True)
+class UiClickField:
+    """GUI 用クリック座標フィールド"""
+
+    key: str
+    label: str
+    default_x: float
+    default_y: float
+    required: bool = True
+
+
+UI_CLICK_FIELDS: tuple[UiClickField, ...] = (
+    UiClickField("join_server_list", "① サーバー一覧 JOIN", 92.0, 92.0),
+    UiClickField("join_mods", "② MODS JOIN", 42.0, 92.0, required=False),
+    UiClickField("cancel_failed", "③-A CANCEL", 55.0, 55.0),
+    UiClickField("back_empty_list", "④ BACK", 5.0, 92.0),
+    UiClickField("join_game", "⑤ JOIN GAME", 29.0, 91.0),
+    UiClickField("accept_network_failure", "⑥ ACCEPT", 50.0, 60.0),
+)
+
 STATE_LABELS = {
     LoginState.IDLE: "待機中",
     LoginState.JOINING_SERVER: "サーバー一覧で JOIN 中",
@@ -31,19 +55,128 @@ STATE_LABELS = {
     LoginState.STOPPED: "停止",
 }
 
-# GUI / config.yaml の retry キー: (表示ラベル, デフォルト, 最小, 最大, 刻み, グループ)
-RETRY_TIMING_FIELDS: tuple[tuple[str, str, float, float, float, float, str], ...] = (
-    ("start_countdown_seconds", "開始までのカウントダウン (秒)", 3, 0, 60, 1, "全体・開始前"),
-    ("poll_interval", "画面・ボタンを確認する間隔 (秒)", 0.5, 0.1, 5.0, 0.1, "全体・開始前"),
-    ("transition_settle", "クリック前の安定待ち (秒)", 0.4, 0.0, 5.0, 0.1, "全体・開始前"),
-    ("after_click_delay", "クリック後の画面遷移待ち (秒)", 2.0, 0.0, 30.0, 0.5, "全体・開始前"),
-    ("transition_timeout", "ボタン・画面が出るまでの上限 (秒)", 20.0, 1.0, 120.0, 1.0, "サーバー一覧・MODS"),
-    ("mods_wait_seconds", "REQUIRED MODS 画面の出現待ち (秒)", 8.0, 0.0, 60.0, 1.0, "REQUIRED MODS"),
-    ("result_timeout", "ログイン完了までの待ち (秒)", 120.0, 10.0, 600.0, 10.0, "ログイン処理"),
-    ("login_movie_timeout", "ログインムービー再生中の追加待ち (秒)", 120.0, 10.0, 600.0, 10.0, "ログイン処理"),
-    ("stuck_server_list_seconds", "一覧のまま動かないと判断する時間 (秒)", 30.0, 20.0, 120.0, 5.0, "ログイン処理"),
-    ("recovery_timeout", "失敗後に次の画面を待つ上限 (秒)", 45.0, 5.0, 300.0, 5.0, "失敗後の復帰"),
+
+@dataclass(frozen=True)
+class SettingField:
+    """GUI 用の数値設定メタデータ"""
+
+    key: str
+    label: str
+    help: str
+    default: float
+    vmin: float
+    vmax: float
+    increment: float
+    group: str
+    value_type: Literal["float", "int"] = "float"
+
+
+# GUI / config.yaml の retry キー
+RETRY_TIMING_FIELDS: tuple[SettingField, ...] = (
+    SettingField(
+        "start_countdown_seconds",
+        "開始までの待ち",
+        "「開始」押下後、実際の操作を始めるまでの秒数",
+        3, 0, 60, 1, "全体", "int",
+    ),
+    SettingField(
+        "poll_interval",
+        "画面チェック間隔",
+        "ボタンや画面の状態を何秒ごとに確認するか（短いほど反応は早い）",
+        0.5, 0.1, 5.0, 0.1, "全体",
+    ),
+    SettingField(
+        "transition_settle",
+        "クリック前の待ち",
+        "ボタンを検出してから実際にクリックするまでの安定待ち",
+        0.4, 0.0, 5.0, 0.1, "全体",
+    ),
+    SettingField(
+        "after_click_delay",
+        "クリック後の待ち",
+        "クリック後、画面が切り替わり始めるまでの待ち",
+        2.0, 0.0, 30.0, 0.5, "全体",
+    ),
+    SettingField(
+        "transition_timeout",
+        "次の画面・ボタンの出現待ち（上限）",
+        "JOIN や BACK 後、次に押すボタンや画面が出るまでの最大秒数",
+        20.0, 1.0, 120.0, 1.0, "①② サーバー一覧・MODS",
+    ),
+    SettingField(
+        "mods_wait_seconds",
+        "② MODS 画面の確認時間",
+        "① JOIN 後、この秒数だけ MODS 画面の有無を確認する（なければ③へ進む）",
+        8.0, 0.0, 60.0, 1.0, "①② サーバー一覧・MODS",
+    ),
+    SettingField(
+        "result_timeout",
+        "③ ログイン結果の待ち（上限）",
+        "ログイン試行後、成功・失敗・動画のいずれかが出るまでの最大秒数",
+        120.0, 10.0, 600.0, 10.0, "③ ログイン処理",
+    ),
+    SettingField(
+        "login_movie_timeout",
+        "③ ログイン動画の追加待ち",
+        "ログイン動画が表示されたあと、成功と判断するまでの追加秒数",
+        120.0, 10.0, 600.0, 10.0, "③ ログイン処理",
+    ),
+    SettingField(
+        "stuck_server_list_seconds",
+        "③ 停滞とみなす時間",
+        "ログイン中ずっとサーバー一覧のままなら、固まったと判断してリトライする",
+        30.0, 20.0, 120.0, 5.0, "③ ログイン処理",
+    ),
+    SettingField(
+        "recovery_timeout",
+        "失敗後の画面復帰待ち（上限）",
+        "CANCEL・BACK・ACCEPT 後、次の操作可能画面が出るまでの最大秒数",
+        45.0, 5.0, 300.0, 5.0, "失敗時の復帰（④〜⑦）",
+    ),
 )
+
+MATCHING_FIELDS: tuple[SettingField, ...] = (
+    SettingField(
+        "screen_threshold",
+        "画面判定の一致度",
+        "サーバー一覧やメインメニューなど「画面全体」の一致度。この値以上で一致とみなす",
+        0.75, 0.50, 0.95, 0.01, "画像認識の感度",
+    ),
+    SettingField(
+        "button_threshold",
+        "ボタン判定の一致度",
+        "JOIN や CANCEL などボタン画像の一致度。低くすると誤クリック、高くすると見逃しやすい",
+        0.75, 0.50, 0.95, 0.01, "画像認識の感度",
+    ),
+    SettingField(
+        "button_threshold_relaxed",
+        "ボタン再検索の緩い一致度",
+        "通常のしきい値で見つからないとき、こちらの値でもう一度検索する",
+        0.68, 0.45, 0.90, 0.01, "画像認識の感度",
+    ),
+    SettingField(
+        "mods_screen_threshold",
+        "② MODS 画面の一致度",
+        "MODS 画面が出ているかの判定。低くすると見逃しにくいが誤判定も増える",
+        0.55, 0.40, 0.90, 0.01, "画像認識の感度",
+    ),
+    SettingField(
+        "screen_ready_margin",
+        "① 復帰判定のゆるさ",
+        "サーバー一覧に戻った判定をどれだけ緩くするか（大きいほど緩い）",
+        0.05, 0.00, 0.20, 0.01, "画像認識の感度",
+    ),
+)
+
+CLICK_MODE_OPTIONS: tuple[tuple[str, str], ...] = (
+    ("image", "画像優先（見つかったら画像の位置をクリック）"),
+    ("image_only", "画像のみ（座標フォールバックなし）"),
+    ("coordinates", "座標優先（画像が見つからなければ登録座標）"),
+    ("coordinates_only", "座標のみ（画像は画面判定のみ・クリックはすべて座標）"),
+)
+
+CLICK_MODE_LABEL_TO_VALUE = {label: value for value, label in CLICK_MODE_OPTIONS}
+CLICK_MODE_VALUE_TO_LABEL = {value: label for value, label in CLICK_MODE_OPTIONS}
 
 
 def ensure_config_exists() -> Path:
@@ -78,10 +211,16 @@ def apply_ui_overrides(
     delay_seconds: float | None = None,
     monitor_index: int | None = None,
     retry_timing: dict[str, float | int] | None = None,
+    matching_overrides: dict[str, float | str] | None = None,
+    window_overrides: dict[str, str | bool] | None = None,
+    ui_overrides: dict[str, dict[str, float]] | None = None,
 ) -> dict:
     updated = yaml.safe_load(yaml.dump(config)) or {}
     retry = updated.setdefault("retry", {})
     display = updated.setdefault("display", {})
+    matching = updated.setdefault("matching", {})
+    window = updated.setdefault("window", {})
+    ui = updated.setdefault("ui", {})
 
     if max_attempts is not None:
         retry["max_attempts"] = max_attempts
@@ -92,6 +231,15 @@ def apply_ui_overrides(
     if retry_timing:
         for key, value in retry_timing.items():
             retry[key] = value
+    if matching_overrides:
+        for key, value in matching_overrides.items():
+            matching[key] = value
+    if window_overrides:
+        for key, value in window_overrides.items():
+            window[key] = value
+    if ui_overrides:
+        for key, value in ui_overrides.items():
+            ui[key] = value
 
     return updated
 
@@ -109,8 +257,8 @@ def build_automator(
     display_cfg = config.get("display", {})
 
     monitor_index = int(display_cfg.get("monitor_index", 1))
-    screen_threshold = matching_cfg.get("screen_threshold", matching_cfg.get("threshold", 0.75))
-    vision = Vision(threshold=matching_cfg.get("threshold", 0.8), monitor_index=monitor_index)
+    screen_threshold = float(matching_cfg.get("screen_threshold", matching_cfg.get("threshold", 0.75)))
+    vision = Vision(threshold=float(matching_cfg.get("threshold", 0.8)), monitor_index=monitor_index)
 
     templates = TemplateConfig(
         server_list=templates_cfg.get("server_list", "templates/server_list.png"),
@@ -123,6 +271,8 @@ def build_automator(
         main_menu=templates_cfg.get("main_menu", "templates/main_menu.png"),
         in_game=templates_cfg.get("in_game", "templates/in_game.png"),
         screen_threshold=screen_threshold,
+        mods_screen_threshold=float(matching_cfg.get("mods_screen_threshold", 0.55)),
+        screen_ready_margin=float(matching_cfg.get("screen_ready_margin", 0.05)),
         click_mode=matching_cfg.get("click_mode", "image"),
     )
 

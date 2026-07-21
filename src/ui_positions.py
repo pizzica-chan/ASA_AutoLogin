@@ -51,7 +51,7 @@ class UiPositions:
             cancel_failed=point("cancel_failed", default=(55.0, 55.0)),
             accept_network_failure=point("accept_network_failure", default=(0.0, 0.0)),
             back_empty_list=point("back_empty_list", default=(5.0, 92.0)),
-            join_game=point("join_game", default=(50.0, 50.0)),
+            join_game=point("join_game", default=(29.0, 91.0)),
             monitor_index=monitor_index,
         )
 
@@ -69,6 +69,18 @@ class UiPositions:
         if point is None:
             return False
         return point.x_percent > 0 and point.y_percent > 0
+
+    def iter_click_points(self) -> list[tuple[str, Point]]:
+        points: list[tuple[str, Point]] = [
+            ("join_server_list", self.join_server_list),
+            ("cancel_failed", self.cancel_failed),
+            ("back_empty_list", self.back_empty_list),
+            ("join_game", self.join_game),
+            ("accept_network_failure", self.accept_network_failure),
+        ]
+        if self.join_mods is not None:
+            points.insert(1, ("join_mods", self.join_mods))
+        return points
 
     def get_screen_size(self) -> tuple[int, int]:
         monitor = get_monitor(self.monitor_index)

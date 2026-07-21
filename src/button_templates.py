@@ -5,11 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .default_assets import resolve_button_path, list_button_paths
-from .paths import app_root
+from .default_assets import USER_BUTTONS_DIR, list_button_paths, resolve_button_path
 from .ui_positions import Point, UiPositions
 
-BUTTONS_DIR = app_root() / "templates" / "buttons"
+BUTTONS_DIR = USER_BUTTONS_DIR
 
 REQUIRED_BUTTONS = (
     "join_server_list",
@@ -30,13 +29,15 @@ class ButtonConfig:
 
     paths: dict[str, str] = field(default_factory=dict)
     threshold: float = 0.75
+    threshold_relaxed: float = 0.68
 
     @classmethod
     def from_dict(cls, data: dict, matching: dict | None = None) -> ButtonConfig:
         matching = matching or {}
         paths = {k: str(v) for k, v in (data or {}).items()}
         threshold = float(matching.get("button_threshold", matching.get("threshold", 0.75)))
-        return cls(paths=paths, threshold=threshold)
+        threshold_relaxed = float(matching.get("button_threshold_relaxed", 0.68))
+        return cls(paths=paths, threshold=threshold, threshold_relaxed=threshold_relaxed)
 
     def get(self, key: str) -> str | None:
         user_path = self.paths.get(key)

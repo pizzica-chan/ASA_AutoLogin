@@ -1,0 +1,763 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ASA_Login 取扱説明書</title>
+  <style>
+    :root {
+      --bg: #1a1d23;
+      --surface: #242830;
+      --surface2: #2d323c;
+      --border: #3a4150;
+      --text: #e8eaed;
+      --text-dim: #9aa0a6;
+      --accent: #4a9eff;
+      --success: #34c759;
+      --warning: #ff9f0a;
+      --danger: #ff453a;
+      --max-width: 920px;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: "Segoe UI", "Hiragino Sans", "Yu Gothic UI", Meiryo, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.7;
+      font-size: 16px;
+    }
+
+    a { color: var(--accent); }
+    a:hover { text-decoration: none; }
+
+    header {
+      background: linear-gradient(135deg, #1e2430 0%, #242830 100%);
+      border-bottom: 1px solid var(--border);
+      padding: 2.5rem 1.5rem 2rem;
+    }
+
+    header .inner,
+    main,
+    footer .inner {
+      max-width: var(--max-width);
+      margin: 0 auto;
+    }
+
+    header h1 {
+      margin: 0 0 0.4rem;
+      font-size: 2rem;
+      font-weight: 700;
+    }
+
+    header p {
+      margin: 0;
+      color: var(--text-dim);
+    }
+
+    main {
+      padding: 2rem 1.5rem 4rem;
+    }
+
+    nav.toc {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1.25rem 1.5rem;
+      margin-bottom: 2.5rem;
+    }
+
+    nav.toc h2 {
+      margin: 0 0 0.75rem;
+      font-size: 1rem;
+      color: var(--accent);
+    }
+
+    nav.toc ol {
+      margin: 0;
+      padding-left: 1.25rem;
+      columns: 2;
+      column-gap: 2rem;
+    }
+
+    @media (max-width: 640px) {
+      nav.toc ol { columns: 1; }
+    }
+
+    section {
+      margin-bottom: 3rem;
+      scroll-margin-top: 1rem;
+    }
+
+    h2 {
+      font-size: 1.5rem;
+      margin: 0 0 1rem;
+      padding-bottom: 0.5rem;
+      border-bottom: 2px solid var(--border);
+    }
+
+    h3 {
+      font-size: 1.15rem;
+      margin: 1.75rem 0 0.75rem;
+      color: var(--accent);
+    }
+
+    h4 {
+      font-size: 1rem;
+      margin: 1.25rem 0 0.5rem;
+    }
+
+    p, li { color: var(--text); }
+    .lead { font-size: 1.05rem; color: var(--text-dim); }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1.25rem 1.5rem;
+      margin: 1rem 0;
+    }
+
+    .card.warn {
+      border-color: var(--warning);
+      background: rgba(255, 159, 10, 0.08);
+    }
+
+    .card.danger {
+      border-color: var(--danger);
+      background: rgba(255, 69, 58, 0.08);
+    }
+
+    .card.success {
+      border-color: var(--success);
+      background: rgba(52, 199, 89, 0.08);
+    }
+
+    .card strong { color: var(--text); }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 1rem 0;
+      font-size: 0.95rem;
+    }
+
+    th, td {
+      border: 1px solid var(--border);
+      padding: 0.6rem 0.75rem;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      background: var(--surface2);
+      color: var(--accent);
+      font-weight: 600;
+    }
+
+    code, .path {
+      font-family: Consolas, "Cascadia Code", monospace;
+      font-size: 0.9em;
+      background: var(--surface2);
+      padding: 0.1em 0.35em;
+      border-radius: 4px;
+    }
+
+    pre.flow {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1rem 1.25rem;
+      overflow-x: auto;
+      font-family: Consolas, monospace;
+      font-size: 0.88rem;
+      line-height: 1.5;
+      color: var(--text-dim);
+    }
+
+    .btn-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 1rem;
+      margin: 1.25rem 0;
+    }
+
+    .btn-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+
+    .btn-card img {
+      width: 100%;
+      height: auto;
+      display: block;
+      background: #111;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .btn-card figcaption {
+      padding: 0.75rem;
+      font-size: 0.88rem;
+    }
+
+    .btn-card figcaption strong {
+      display: block;
+      margin-bottom: 0.25rem;
+      color: var(--text);
+    }
+
+    .btn-card figcaption span {
+      color: var(--text-dim);
+      font-size: 0.82rem;
+    }
+
+    figure.screen {
+      margin: 1.25rem 0;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+
+    figure.screen img {
+      width: 100%;
+      display: block;
+    }
+
+    figure.screen figcaption {
+      padding: 0.75rem 1rem;
+      font-size: 0.9rem;
+      color: var(--text-dim);
+      border-top: 1px solid var(--border);
+    }
+
+    ol.steps {
+      padding-left: 1.25rem;
+    }
+
+    ol.steps li { margin-bottom: 0.5rem; }
+
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 1.5rem;
+      color: var(--text-dim);
+      font-size: 0.9rem;
+    }
+
+    .badge {
+      display: inline-block;
+      font-size: 0.75rem;
+      padding: 0.15em 0.5em;
+      border-radius: 4px;
+      background: var(--surface2);
+      color: var(--accent);
+      margin-right: 0.35rem;
+      vertical-align: middle;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="inner">
+      <h1>ASA_Login 取扱説明書</h1>
+      <p>ARK: Survival Ascended のサーバー参加（ログイン）を自動化する Windows 向けツール</p>
+    </div>
+  </header>
+
+  <main>
+    <nav class="toc" aria-label="目次">
+      <h2>目次</h2>
+      <ol>
+        <li><a href="#overview">このツールについて</a></li>
+        <li><a href="#install">インストールと起動</a></li>
+        <li><a href="#quickstart">クイックスタート</a></li>
+        <li><a href="#flow">自動化の流れ（①〜⑦）</a></li>
+        <li><a href="#setup">セットアップ</a></li>
+        <li><a href="#gui">GUI の各タブ</a></li>
+        <li><a href="#buttons">ボタン画像の差し替え</a></li>
+        <li><a href="#logs">ログの見方</a></li>
+        <li><a href="#troubleshoot">うまくいかないとき</a></li>
+        <li><a href="#notes">注意事項</a></li>
+      </ol>
+    </nav>
+
+    <section id="overview">
+      <h2>このツールについて</h2>
+      <p class="lead">
+        ASA_Login は、<strong>接続先サーバーをあらかじめ選択した状態</strong>から、
+        JOIN ボタンのクリック〜ログイン待ち〜失敗時の復帰までを自動で繰り返すツールです。
+      </p>
+
+      <div class="card">
+        <strong>ツールが行うこと</strong>
+        <ul>
+          <li>サーバー一覧の JOIN →（必要なら）MODS の JOIN → ログイン待ち</li>
+          <li>満員などで失敗したときの CANCEL / BACK / JOIN GAME による復帰と再試行</li>
+          <li>タイトル画面での NETWORK FAILURE 処理（ACCEPT → Space → JOIN GAME）</li>
+        </ul>
+      </div>
+
+      <div class="card warn">
+        <strong>ツールが行わないこと</strong>
+        <ul>
+          <li>SESSION NAME によるサーバー検索</li>
+          <li>Official / Unofficial などのサーバータブ切り替え</li>
+          <li>サーバー行の選択（<strong>ユーザーが手動で選択</strong>してください）</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="install">
+      <h2>インストールと起動</h2>
+
+      <h3>配布版（Python 不要・推奨）</h3>
+      <ol class="steps">
+        <li><code>ASA_Login-win64.zip</code> を任意のフォルダに展開します。</li>
+        <li><code>ASA_Login.exe</code> をダブルクリックして起動します。</li>
+        <li>初回起動時に <code>config.yaml</code> と <code>templates/</code> が自動作成されます。</li>
+      </ol>
+
+      <p>展開後のフォルダ構成の例:</p>
+      <pre class="flow">ASA_Login/
+  ASA_Login.exe
+  config.example.yaml
+  config.yaml          … 初回起動で自動生成
+  templates/           … 画面キャプチャ（セットアップで作成）
+  templates/buttons/   … ボタン認識用 PNG
+  logs/                … ログファイル
+  使い方.txt</pre>
+
+      <h3>開発版（Python あり）</h3>
+      <pre class="flow">pip install -r requirements.txt
+python gui.py</pre>
+    </section>
+
+    <section id="quickstart">
+      <h2>クイックスタート</h2>
+      <ol class="steps">
+        <li>ARK を起動し、<strong>マルチプレイのサーバー一覧</strong>を表示します。</li>
+        <li>接続したいサーバーの行をクリックして<strong>オレンジ色で選択</strong>します。</li>
+        <li>ASA_Login の <strong>「セットアップ」</strong> を押し、<strong>最小モード（推奨）</strong> で ① サーバー一覧を登録します。</li>
+        <li>ARK を表示しているモニターを GUI の <strong>「ARK を表示しているモニター」</strong> で選びます。</li>
+        <li><strong>「開始」</strong> を押し、確認ダイアログの指示どおりの状態であることを確認して実行します。</li>
+      </ol>
+
+      <div class="card success">
+        <strong>最小セットアップのポイント</strong><br>
+        ① サーバー一覧のキャプチャだけで動作します。CANCEL / BACK / MODS JOIN などのボタンは
+        同梱のボタン画像で自動検出するため、<strong>わざとエラー画面を起こしてキャプチャする必要はありません</strong>。
+      </div>
+    </section>
+
+    <section id="flow">
+      <h2>自動化の流れ（①〜⑦）</h2>
+      <p>1 回の接続試行は <strong>① → ②（任意）→ ③</strong> です。失敗した場合は復帰ルートに入り、再び ① から繰り返します。</p>
+
+      <pre class="flow">① サーバー一覧（選択済み）→ 右下 JOIN
+        ↓
+② REQUIRED MODS（表示された場合のみ）→ 左下 JOIN
+        ↓
+③ ログイン試行（待機）
+   ├─ 成功（ゲーム内画面を検出）→ 完了
+   ├─ ③-A CONNECTION FAILED → CANCEL → ④ BACK → ⑤ JOIN GAME → ①
+   └─ ⑥ NETWORK FAILURE → ACCEPT → ⑦ Space → ⑤ JOIN GAME → ①</pre>
+
+      <table>
+        <thead>
+          <tr>
+            <th>番号</th>
+            <th>画面</th>
+            <th>操作</th>
+            <th>備考</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>①</td>
+            <td>サーバー一覧</td>
+            <td>右下の <strong>JOIN</strong> をクリック</td>
+            <td>サーバーは事前選択済みであること</td>
+          </tr>
+          <tr>
+            <td>②</td>
+            <td>REQUIRED MODS</td>
+            <td>モーダル左下の <strong>JOIN</strong></td>
+            <td>出ないサーバーはスキップ</td>
+          </tr>
+          <tr>
+            <td>③</td>
+            <td>ログイン処理中</td>
+            <td>待機のみ</td>
+            <td>成功・失敗・動画のいずれかを監視</td>
+          </tr>
+          <tr>
+            <td>③-A</td>
+            <td>CONNECTION FAILED</td>
+            <td><strong>CANCEL</strong>（ACCEPT は使わない）</td>
+            <td>サーバー一覧上のダイアログ</td>
+          </tr>
+          <tr>
+            <td>④</td>
+            <td>空のサーバー一覧</td>
+            <td>左下の <strong>BACK</strong></td>
+            <td><code>MULTIPLAYER SERVERS: 0</code> など</td>
+          </tr>
+          <tr>
+            <td>⑤</td>
+            <td>メインメニュー</td>
+            <td><strong>JOIN GAME</strong> カードをクリック</td>
+            <td>④枚 / ⑤枚タイルに対応</td>
+          </tr>
+          <tr>
+            <td>⑥</td>
+            <td>NETWORK FAILURE</td>
+            <td><strong>ACCEPT</strong></td>
+            <td>タイトル画面のダイアログ</td>
+          </tr>
+          <tr>
+            <td>⑦</td>
+            <td>タイトル画面</td>
+            <td><strong>Space</strong> キー</td>
+            <td>⑤ と同様に JOIN GAME へ</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>⑤ メインメニューの例（④枚タイル）</h3>
+      <figure class="screen">
+        <img src="setup_samples/04_main_menu_4tiles.png" alt="メインメニュー（4枚タイルレイアウト）" width="960" height="540">
+        <figcaption>
+          左から2番目のカードが JOIN GAME です（④枚タイルレイアウト）。
+          ⑤枚タイル（中央が JOIN GAME）の場合は <code>join_game_center.png</code> も利用します。
+        </figcaption>
+      </figure>
+
+      <h3>各操作で使うボタン画像</h3>
+      <p>クリック対象は <code>templates/buttons/</code> 内の PNG を画面上から検索して押します（座標フォールバックあり）。</p>
+
+      <div class="btn-grid">
+        <figure class="btn-card">
+          <img src="../templates/buttons/join_server_list.png" alt="① JOIN（サーバー一覧）">
+          <figcaption>
+            <strong>① join_server_list.png</strong>
+            <span>サーバー一覧・右下 JOIN</span>
+          </figcaption>
+        </figure>
+        <figure class="btn-card">
+          <img src="../templates/buttons/join_mods.png" alt="② JOIN（MODS）">
+          <figcaption>
+            <strong>② join_mods.png</strong>
+            <span>MODS モーダル・左下 JOIN</span>
+          </figcaption>
+        </figure>
+        <figure class="btn-card">
+          <img src="../templates/buttons/cancel_failed.png" alt="③-A CANCEL">
+          <figcaption>
+            <strong>③-A cancel_failed.png</strong>
+            <span>CONNECTION FAILED の CANCEL</span>
+          </figcaption>
+        </figure>
+        <figure class="btn-card">
+          <img src="../templates/buttons/back_empty_list.png" alt="④ BACK">
+          <figcaption>
+            <strong>④ back_empty_list.png</strong>
+            <span>空一覧・左下 BACK</span>
+          </figcaption>
+        </figure>
+        <figure class="btn-card">
+          <img src="../templates/buttons/join_game.png" alt="⑤ JOIN GAME（4枚タイル）">
+          <figcaption>
+            <strong>⑤ join_game.png</strong>
+            <span>④枚タイル・左寄り JOIN GAME</span>
+          </figcaption>
+        </figure>
+        <figure class="btn-card">
+          <img src="../templates/buttons/join_game_center.png" alt="⑤ JOIN GAME（5枚タイル）">
+          <figcaption>
+            <strong>⑤ join_game_center.png</strong>
+            <span>⑤枚タイル・中央 JOIN GAME</span>
+          </figcaption>
+        </figure>
+        <figure class="btn-card">
+          <img src="../templates/buttons/accept_network_failure.png" alt="⑥ ACCEPT">
+          <figcaption>
+            <strong>⑥ accept_network_failure.png</strong>
+            <span>NETWORK FAILURE の ACCEPT</span>
+          </figcaption>
+        </figure>
+      </div>
+
+      <h3>リトライ設定</h3>
+      <ul>
+        <li><strong>最大試行回数</strong> … <code>0</code> のとき成功するまで無制限に繰り返します。</li>
+        <li><strong>リトライ間隔</strong> … 失敗して ① に戻ったあと、次の試行まで待つ秒数です。</li>
+      </ul>
+    </section>
+
+    <section id="setup">
+      <h2>セットアップ</h2>
+      <p>GUI の <strong>「セットアップ」</strong> ボタンから、画面キャプチャとクリック座標を登録します。</p>
+
+      <h3>最小モード（推奨）</h3>
+      <div class="card success">
+        <strong>① サーバー一覧だけ</strong>登録すれば動作します。<br>
+        エラー系のボタンは同梱 PNG で検出するため、CONNECTION FAILED などの画面をわざと起こす必要はありません。
+      </div>
+
+      <h3>フルモード</h3>
+      <p>解像度や UI レイアウトが大きく異なる環境向けです。各画面を個別にキャプチャし、精度を上げられます。</p>
+
+      <table>
+        <thead>
+          <tr>
+            <th>ステップ</th>
+            <th>保存ファイル</th>
+            <th>クリック登録</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>① サーバー一覧</td>
+            <td><code>templates/server_list.png</code></td>
+            <td>右下 JOIN</td>
+          </tr>
+          <tr>
+            <td>② MODS（任意）</td>
+            <td><code>templates/required_mods.png</code></td>
+            <td>左下 JOIN</td>
+          </tr>
+          <tr>
+            <td>③-A CONNECTION FAILED</td>
+            <td><code>templates/connection_failed.png</code></td>
+            <td>CANCEL</td>
+          </tr>
+          <tr>
+            <td>④ 空のサーバー一覧</td>
+            <td><code>templates/server_list_empty.png</code></td>
+            <td>BACK</td>
+          </tr>
+          <tr>
+            <td>⑤ メインメニュー</td>
+            <td><code>templates/main_menu.png</code></td>
+            <td>JOIN GAME</td>
+          </tr>
+          <tr>
+            <td>⑥ NETWORK FAILURE</td>
+            <td><code>templates/network_failure.png</code></td>
+            <td>ACCEPT</td>
+          </tr>
+          <tr>
+            <td>⑦ タイトル画面（任意）</td>
+            <td><code>templates/title_screen.png</code></td>
+            <td>—（Space キー）</td>
+          </tr>
+          <tr>
+            <td>成功判定（推奨）</td>
+            <td><code>templates/in_game.png</code></td>
+            <td>—</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="card warn">
+        <strong>再セットアップが必要なタイミング</strong>
+        <ul>
+          <li>ゲームの解像度や表示モードを変更したとき</li>
+          <li>モニターの割り当てを変えたとき</li>
+          <li>UI スケールや言語設定を変えたとき</li>
+        </ul>
+      </div>
+    </section>
+
+    <section id="gui">
+      <h2>GUI の各タブ</h2>
+
+      <h3><span class="badge">メイン</span> 基本設定</h3>
+      <ul>
+        <li><strong>注意事項</strong> … 動作前の確認ポイント</li>
+        <li><strong>ARK を表示しているモニター</strong> … サブモニター運用時はここで対象を選択</li>
+        <li><strong>最大試行回数 / リトライ間隔</strong> … 失敗時の繰り返し設定</li>
+      </ul>
+
+      <h3><span class="badge">待ち時間</span> 場面ごとの待機</h3>
+      <p>①〜⑦ の各場面で、どれくらい待つかを細かく調整できます。読み込みが遅い PC では少し長めにすると安定しやすいです。</p>
+      <table>
+        <thead>
+          <tr><th>項目</th><th>説明</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>開始までの待ち</td><td>「開始」押下後、実際の操作を始めるまでの秒数</td></tr>
+          <tr><td>画面チェック間隔</td><td>ボタン・画面状態を確認する間隔（短いほど反応は早い）</td></tr>
+          <tr><td>クリック前 / 後の待ち</td><td>ボタン検出からクリックまで、およびクリック後の安定待ち</td></tr>
+          <tr><td>② MODS 画面の確認時間</td><td>① JOIN 後、MODS が出るかどうか見る時間</td></tr>
+          <tr><td>③ ログイン結果の待ち</td><td>成功・失敗・動画のいずれかが出るまでの上限</td></tr>
+          <tr><td>失敗後の画面復帰待ち</td><td>CANCEL / BACK / ACCEPT 後の復帰待ち上限</td></tr>
+        </tbody>
+      </table>
+
+      <h3><span class="badge">画像認識</span> 一致度の調整</h3>
+      <ul>
+        <li><strong>画面判定の一致度</strong> … サーバー一覧やメインメニューなど全体画面の判定</li>
+        <li><strong>ボタン判定の一致度</strong> … JOIN / CANCEL などボタン画像の判定</li>
+        <li><strong>② MODS 画面の一致度</strong> … MODS の出現判定（低めの値がデフォルト）</li>
+        <li><strong>ARK ウィンドウのタイトル</strong> … 通常は変更不要</li>
+        <li><strong>操作前に ARK を前面に出す</strong> … サブモニター運用ではオン推奨</li>
+      </ul>
+      <p>誤クリックが多い → 一致度を<strong>上げる</strong>。見逃しが多い → 一致度を<strong>下げる</strong>。</p>
+
+      <h3><span class="badge">クリック座標</span> ％座標とクリック方式</h3>
+      <p>左上 (0, 0)、右下 (100, 100) のパーセント座標で各ボタンの位置を指定します。セットアップで登録した値もここに反映されます。</p>
+
+      <table>
+        <thead>
+          <tr><th>クリック方式</th><th>動作</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>画像優先</td>
+            <td>ボタン画像が見つかればその位置をクリック。見つからなければ登録座標</td>
+          </tr>
+          <tr>
+            <td>画像のみ</td>
+            <td>画像が見つからない場合は座標にフォールバックしない</td>
+          </tr>
+          <tr>
+            <td>座標優先</td>
+            <td>登録座標を優先（画像は補助）</td>
+          </tr>
+          <tr>
+            <td>座標のみ</td>
+            <td>クリックはすべて座標。画像認識は画面遷移の判定のみに使用</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <p><strong>座標プレビュー</strong> ボタンで、設定した位置をモニター上に点表示して確認できます。</p>
+
+      <h3>ログエリア</h3>
+      <ul>
+        <li><strong>ログ</strong> … 進行状況のわかりやすい表示（通常はこちら）</li>
+        <li><strong>詳細ログ</strong> … 類似度・座標など技術情報（原因調査用）</li>
+      </ul>
+    </section>
+
+    <section id="buttons">
+      <h2>ボタン画像の差し替え</h2>
+      <p>
+        実行時に参照するのは <code>templates/buttons/</code> 内の PNG です。
+        初回起動時に <code>assets/defaults/buttons/</code>（配布版では同梱データ）からコピーされます。
+      </p>
+
+      <ol class="steps">
+        <li>ゲーム画面で対象ボタン部分を切り出した PNG を用意します。</li>
+        <li><code>templates/buttons/</code> に<strong>同じファイル名</strong>で上書き保存します。</li>
+        <li>ASA_Login を再起動するか、次の試行から反映されます。</li>
+      </ol>
+
+      <div class="card">
+        <strong>主なファイル名</strong>
+        <ul>
+          <li><code>join_server_list.png</code> … ① サーバー一覧 JOIN</li>
+          <li><code>join_mods.png</code> … ② MODS JOIN</li>
+          <li><code>cancel_failed.png</code> … ③-A CANCEL</li>
+          <li><code>back_empty_list.png</code> … ④ BACK</li>
+          <li><code>join_game.png</code> … ⑤ JOIN GAME（④枚タイル）</li>
+          <li><code>join_game_center.png</code> … ⑤ JOIN GAME（⑤枚タイル）</li>
+          <li><code>accept_network_failure.png</code> … ⑥ ACCEPT</li>
+        </ul>
+      </div>
+
+      <div class="card warn">
+        初回コピー後は既存ファイルを上書きしません。古い PNG が残っている場合は手動で差し替えてください。
+        ⑤枚タイルレイアウトで JOIN GAME が押せない場合は <code>join_game_center.png</code> を
+        ご自身の画面から切り出して差し替えてください。
+      </div>
+    </section>
+
+    <section id="logs">
+      <h2>ログの見方</h2>
+      <table>
+        <thead>
+          <tr><th>出力先</th><th>内容</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>GUI「ログ」タブ</td>
+            <td>今どの段階か、成功・失敗などユーザー向けメッセージ</td>
+          </tr>
+          <tr>
+            <td>GUI「詳細ログ」タブ</td>
+            <td>画像一致度、検出座標、状態遷移の詳細</td>
+          </tr>
+          <tr>
+            <td><code>logs/asa_login_user.log</code></td>
+            <td>ユーザー向けログのファイル保存</td>
+          </tr>
+          <tr>
+            <td><code>logs/asa_login_detail.log</code></td>
+            <td>詳細ログのファイル保存</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>問題が起きたときは、まず「ログ」タブで止まっている段階を確認し、必要なら「詳細ログ」で一致度を調べてください。</p>
+    </section>
+
+    <section id="troubleshoot">
+      <h2>うまくいかないとき</h2>
+
+      <h3>ボタンを押せない・押す位置がずれる</h3>
+      <ul>
+        <li>「画像認識」タブでボタン判定の一致度を調整する</li>
+        <li>「クリック座標」タブで座標を微調整、または「座標プレビュー」で確認する</li>
+        <li><code>templates/buttons/</code> の PNG を自分の画面から切り出して差し替える</li>
+        <li>解像度変更後はセットアップをやり直す</li>
+      </ul>
+
+      <h3>画面の判定が合わない</h3>
+      <ul>
+        <li>セットアップで ①（必要なら他画面も）を再キャプチャする</li>
+        <li>画面判定の一致度を下げる（ただし誤判定も増えやすい）</li>
+      </ul>
+
+      <h3>サブモニターで動かない</h3>
+      <ul>
+        <li>「ARK を表示しているモニター」が正しいか確認する</li>
+        <li>「操作前に ARK を前面に出す」をオンにする</li>
+        <li>ARK が他ウィンドウに隠れていないか確認する</li>
+      </ul>
+
+      <h3>③ で長く待たされる</h3>
+      <ul>
+        <li>「待ち時間」タブのログイン結果待ち・動画待ちを確認する</li>
+        <li>ログイン動画が流れるサーバーでは時間がかかることがあります</li>
+      </ul>
+
+      <h3>設定をファイルで編集したい</h3>
+      <p><code>config.yaml</code> をテキストエディタで編集できます。雛形は <code>config.example.yaml</code> を参照してください。GUI で「設定を保存」を押すとファイルに書き戻されます。</p>
+    </section>
+
+    <section id="notes">
+      <h2>注意事項</h2>
+      <div class="card danger">
+        <ul>
+          <li>接続先サーバーは<strong>必ず手動で選択</strong>してください（オレンジ色のハイライト）。</li>
+          <li>操作時に ARK ウィンドウが一瞬前面に出ます（完全なバックグラウンド動作ではありません）。</li>
+          <li>ゲームの利用規約に違反する可能性があります。<strong>自己責任</strong>でご使用ください。</li>
+          <li>Windows 10 / 11（64bit）向けです。</li>
+        </ul>
+      </div>
+      <p>技術的なフロー仕様の詳細は <code>docs/FLOW.md</code> も参照してください。</p>
+    </section>
+  </main>
+
+  <footer>
+    <div class="inner">
+      ASA_Login — MIT License
+    </div>
+  </footer>
+</body>
+</html>

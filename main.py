@@ -3,34 +3,15 @@
 from __future__ import annotations
 
 import argparse
-import logging
 import signal
 import sys
 import time
 
+from src.app_logging import setup_logging
 from src.app_service import STATE_LABELS, build_automator, load_config
 from src.gui_app import run_gui
 from src.login_flow import LoginState
 from src.setup_wizard import run_wizard_gui
-
-
-def setup_logging(level: str, log_file: str | None) -> None:
-    log_level = getattr(logging, level.upper(), logging.INFO)
-    from pathlib import Path
-
-    handlers: list[logging.Handler] = [logging.StreamHandler()]
-
-    if log_file:
-        log_path = Path(log_file)
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        handlers.append(logging.FileHandler(log_path, encoding="utf-8"))
-
-    logging.basicConfig(
-        level=log_level,
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        datefmt="%H:%M:%S",
-        handlers=handlers,
-    )
 
 
 def on_state_change(state: LoginState, stats) -> None:
@@ -114,7 +95,7 @@ def main() -> None:
         sys.exit(1)
 
     log_cfg = config.get("logging", {})
-    setup_logging(log_cfg.get("level", "INFO"), log_cfg.get("file"))
+    setup_logging(config)
     sys.exit(run_login(config))
 
 

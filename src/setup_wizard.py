@@ -149,11 +149,12 @@ SETUP_STEPS: tuple[SetupStep, ...] = (
         sample_image="04_main_menu.png",
         prepare_lines=(
             "JOIN GAME カードが見えるメインメニューを表示します。",
-            "中央付近の JOIN GAME カード（5枚のうち真ん中）が見える状態にしてください。",
+            "④枚タイル（左から2番目が JOIN GAME）が主流です。",
+            "⑤枚タイル（中央が JOIN GAME）の場合も同梱テンプレートで対応します。",
         ),
         capture_hint="メインメニュー全体をキャプチャします。",
         click_key="join_game",
-        click_hint="中央の JOIN GAME カードの位置をクリックして座標登録",
+        click_hint="JOIN GAME カード下部（文字部分）をクリックして座標登録",
     ),
     SetupStep(
         name="in_game",
@@ -228,6 +229,10 @@ def save_setup_config(ui: dict, monitor_index: int) -> None:
     matching = config.setdefault("matching", {})
     matching.setdefault("screen_threshold", 0.75)
     matching.setdefault("button_threshold", 0.75)
+    matching.setdefault("button_threshold_relaxed", 0.68)
+    matching.setdefault("mods_screen_threshold", 0.55)
+    matching.setdefault("screen_ready_margin", 0.05)
+    matching.setdefault("click_mode", "image")
 
     with open(config_path, "w", encoding="utf-8") as f:
         yaml.dump(config, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
