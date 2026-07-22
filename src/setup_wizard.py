@@ -46,6 +46,62 @@ COLORS = {
 }
 
 
+def _bind_mousewheel(canvas: tk.Canvas) -> None:
+    """スクロール領域上でのマウスホイール"""
+
+    def _on_mousewheel(event: tk.Event) -> None:
+        canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+    def _bind(_event: tk.Event | None = None) -> None:
+        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
+    def _unbind(_event: tk.Event | None = None) -> None:
+        canvas.unbind_all("<MouseWheel>")
+
+    canvas.bind("<Enter>", _bind)
+    canvas.bind("<Leave>", _unbind)
+
+
+def _make_scrollable_area(parent: tk.Misc, *, bg: str) -> tuple[tk.Frame, tk.Frame]:
+    """縦スクロール可能な領域 (outer, inner) を返す"""
+    outer = tk.Frame(parent, bg=bg)
+    canvas = tk.Canvas(outer, bg=bg, highlightthickness=0, borderwidth=0)
+    scrollbar = ttk.Scrollbar(outer, orient=tk.VERTICAL, command=canvas.yview)
+    inner = tk.Frame(canvas, bg=bg)
+
+    def _on_inner_configure(_event: tk.Event | None = None) -> None:
+        canvas.configure(scrollregion=canvas.bbox("all"))
+
+    def _on_canvas_configure(event: tk.Event) -> None:
+        canvas.itemconfigure(canvas_window, width=event.width)
+
+    inner.bind("<Configure>", _on_inner_configure)
+    canvas_window = canvas.create_window((0, 0), window=inner, anchor=tk.NW)
+    canvas.bind("<Configure>", _on_canvas_configure)
+    canvas.configure(yscrollcommand=scrollbar.set)
+
+    canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+    scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+    _bind_mousewheel(canvas)
+    return outer, inner
+
+
+def _place_dialog_near_parent(dialog: tk.Toplevel, parent: tk.Misc) -> None:
+    """親ウィンドウ付近に、画面内に収まるサイズで配置する"""
+    dialog.update_idletasks()
+    screen_w = dialog.winfo_screenwidth()
+    screen_h = dialog.winfo_screenheight()
+    req_w = max(dialog.winfo_reqwidth(), getattr(dialog, "_min_width", 520))
+    req_h = max(dialog.winfo_reqheight(), getattr(dialog, "_min_height", 520))
+    width = min(req_w + 8, screen_w - 40)
+    max_height = int(screen_h * 0.92)
+    height = min(req_h + 12, max_height)
+    x = min(parent.winfo_rootx() + 40, max(20, screen_w - width - 20))
+    y = min(max(20, parent.winfo_rooty() + 20), max(20, screen_h - height - 20))
+    dialog.geometry(f"{width}x{height}+{x}+{y}")
+    dialog.minsize(min(width, getattr(dialog, "_min_width", 520)), min(height, 400))
+
+
 @dataclass(frozen=True)
 class SetupStep:
     name: str
@@ -318,7 +374,9 @@ class SetupIntroDialog(tk.Toplevel):
         super().__init__(parent)
         self.title("ASA_Login セットアップ")
         self.configure(bg=COLORS["bg"])
-        self.resizable(True, False)
+        self.resizable(True, True)
+        self._min_width = 520
+        self._min_height = 560
         self.result: dict | None = None
 
         self.transient(parent)
@@ -329,26 +387,30 @@ class SetupIntroDialog(tk.Toplevel):
         self._step_vars: dict[str, tk.BooleanVar] = {}
         self._step_checks: list[tk.Checkbutton] = []
 
+        header = tk.Frame(self, bg=COLORS["bg"])
+        header.pack(fill=tk.X, padx=20, pady=(16, 8))
         tk.Label(
-            self,
+            header,
             text="セットアップ",
             fg=COLORS["text"],
             bg=COLORS["bg"],
             font=("Segoe UI", 16, "bold"),
-        ).pack(anchor=tk.W, padx=20, pady=(16, 4))
-
+        ).pack(anchor=tk.W)
         tk.Label(
-            self,
+            header,
             text="最小・フルに加え、必要な画面だけ個別に選んで登録できます。",
             fg=COLORS["text_dim"],
             bg=COLORS["bg"],
             font=("Segoe UI", 10),
             wraplength=480,
             justify=tk.LEFT,
-        ).pack(anchor=tk.W, padx=20, pady=(0, 12))
+        ).pack(anchor=tk.W, pady=(4, 0))
 
-        body = tk.Frame(self, bg=COLORS["surface"], padx=14, pady=12)
-        body.pack(fill=tk.BOTH, expand=True, padx=16, pady=(0, 8))
+        scroll_outer, scroll_inner = _make_scrollable_area(self, bg=COLORS["bg"])
+        scroll_outer.pack(fill=tk.BOTH, expand=True, padx=16, pady=(0, 8))
+
+        body = tk.Frame(scroll_inner, bg=COLORS["surface"], padx=14, pady=12)
+        body.pack(fill=tk.X, expand=True)
 
         tk.Label(body, text="モード", fg=COLORS["accent"], bg=COLORS["surface"], font=("Segoe UI", 10, "bold")).pack(anchor=tk.W)
         self.mode_var = tk.StringVar(value="minimal")
@@ -379,7 +441,7 @@ class SetupIntroDialog(tk.Toplevel):
         ).pack(anchor=tk.W, pady=(10, 4))
 
         list_frame = tk.Frame(body, bg=COLORS["surface2"], padx=8, pady=8)
-        list_frame.pack(fill=tk.BOTH, expand=True)
+        list_frame.pack(fill=tk.X)
 
         for step in SETUP_STEPS:
             registered = _step_registered(step)
@@ -450,8 +512,7 @@ class SetupIntroDialog(tk.Toplevel):
 
         self.protocol("WM_DELETE_WINDOW", self._cancel)
         self._sync_custom_state()
-        self.update_idletasks()
-        self.geometry(f"520x640+{parent.winfo_rootx() + 40}+{max(20, parent.winfo_rooty() + 20)}")
+        _place_dialog_near_parent(self, parent)
 
     def _sync_custom_state(self) -> None:
         enabled = self.mode_var.get() == "custom"
@@ -515,7 +576,9 @@ class StepGuideDialog(tk.Toplevel):
         super().__init__(parent)
         self.title("ASA_Login セットアップ")
         self.configure(bg=COLORS["bg"])
-        self.minsize(520, 400)
+        self.resizable(True, True)
+        self._min_width = 520
+        self._min_height = 420
         self.action = "cancel"
 
         self.transient(parent)
@@ -524,10 +587,11 @@ class StepGuideDialog(tk.Toplevel):
         header = tk.Frame(self, bg=COLORS["bg"])
         header.pack(fill=tk.X, padx=16, pady=(14, 6))
         tk.Label(header, text=f"ステップ {step_index} / {total_steps}", fg=COLORS["text_dim"], bg=COLORS["bg"], font=("Segoe UI", 10)).pack(anchor=tk.W)
-        tk.Label(header, text=step.title, fg=COLORS["text"], bg=COLORS["bg"], font=("Segoe UI", 16, "bold")).pack(anchor=tk.W, pady=(2, 0))
+        tk.Label(header, text=step.title, fg=COLORS["text"], bg=COLORS["bg"], font=("Segoe UI", 16, "bold"), wraplength=640, justify=tk.LEFT).pack(anchor=tk.W, pady=(2, 0))
 
-        body = tk.Frame(self, bg=COLORS["bg"])
-        body.pack(fill=tk.BOTH, expand=True, padx=16, pady=8)
+        scroll_outer, scroll_inner = _make_scrollable_area(self, bg=COLORS["bg"])
+        scroll_outer.pack(fill=tk.BOTH, expand=True, padx=16, pady=8)
+        body = scroll_inner
 
         guide = tk.Frame(body, bg=COLORS["surface"], padx=12, pady=10)
         guide.pack(fill=tk.X, pady=(0, 10))
@@ -539,10 +603,10 @@ class StepGuideDialog(tk.Toplevel):
         sample = _sample_path(step)
         if sample:
             sample_frame = tk.Frame(body, bg=COLORS["surface"], padx=10, pady=10)
-            sample_frame.pack(fill=tk.BOTH, expand=True)
+            sample_frame.pack(fill=tk.X)
             tk.Label(sample_frame, text="参考イメージ", fg=COLORS["text_dim"], bg=COLORS["surface"], font=("Segoe UI", 10)).pack(anchor=tk.W, pady=(0, 6))
             img = Image.open(sample)
-            max_w, max_h = 900, 420
+            max_w, max_h = 860, 360
             scale = min(max_w / img.width, max_h / img.height, 1.0)
             disp_w, disp_h = int(img.width * scale), int(img.height * scale)
             photo = ImageTk.PhotoImage(img.resize((disp_w, disp_h), Image.Resampling.LANCZOS))
@@ -561,6 +625,7 @@ class StepGuideDialog(tk.Toplevel):
         ttk.Button(footer, text="キャプチャへ進む", command=lambda: self._choose("continue")).pack(side=tk.RIGHT)
 
         self.protocol("WM_DELETE_WINDOW", lambda: self._choose("cancel"))
+        _place_dialog_near_parent(self, parent)
 
     def _choose(self, action: str) -> None:
         self.action = action
