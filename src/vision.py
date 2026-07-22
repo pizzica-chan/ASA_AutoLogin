@@ -15,6 +15,8 @@ from .display import MonitorInfo, get_monitor
 
 # 画面内の矩形（幅・高さに対する比率 0.0〜1.0）
 SearchRegion = tuple[float, float, float, float]
+ASPECT_WARN_DELTA = 0.03
+ASPECT_CROP_DELTA = 0.08
 
 
 @dataclass
@@ -25,6 +27,7 @@ class MatchResult:
     center_y: int
     top_left: tuple[int, int]
     bottom_right: tuple[int, int]
+    scale: float = 1.0
 
 
 class Vision:
@@ -34,10 +37,14 @@ class Vision:
         monitor_index: int = 1,
         *,
         capture_settings: CaptureSettings | None = None,
+        setup_capture_size: tuple[int, int] | None = None,
+        setup_dpi: int | None = None,
     ):
         self.threshold = threshold
         self.monitor_index = monitor_index
         self.capture_settings = capture_settings or CaptureSettings(monitor_index=monitor_index)
+        self.setup_capture_size = setup_capture_size
+        self.setup_dpi = setup_dpi
         self._sct = mss.MSS()
         self._monitor = get_monitor(monitor_index)
         self._last_region = resolve_capture_region(self.capture_settings, strict_window=False)
@@ -89,24 +96,29 @@ class Vision:
         frame = np.array(screenshot)
         return cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
 
+    @staticmethod
+    def is_black_frame(frame: np.ndarray) -> bool:
+        return float(np.mean(frame)) < 2.0 or float(np.std(frame)) < 1.0
+
     def load_template(self, path: str | Path) -> np.ndarray | None:
         template_path = Path(path)
         cache_key = str(template_path.resolve())
-        cached = getattr(self, "_template_cache", None)
-        if cached is not None and cache_key in cached:
-            return cached[cache_key]
-
-        if not template_path.exists():
+        try:
+            stat_key = (template_path.stat().st_mtime_ns, template_path.stat().st_size)
+        except OSError:
             detail_log.warning("テンプレートが見つかりません: %s", template_path)
             return None
+        cached = getattr(self, "_template_cache", None)
+        if cached is not None and cache_key in cached and cached[cache_key][0] == stat_key:
+            return cached[cache_key][1]
         template = cv2.imread(str(template_path), cv2.IMREAD_COLOR)
         if template is None:
             detail_log.warning("テンプレートの読み込みに失敗: %s", template_path)
             return None
 
         if not hasattr(self, "_template_cache"):
-            self._template_cache: dict[str, np.ndarray] = {}
-        self._template_cache[cache_key] = template
+            self._template_cache: dict[str, tuple[tuple[int, int], np.ndarray]] = {}
+        self._template_cache[cache_key] = (stat_key, template)
         return template
 
     def find_template(
@@ -169,25 +181,62 @@ class Vision:
 
         match_threshold = self.threshold if threshold is None else threshold
         result = self._find_template_with_offset(
-            search_screen, template, match_threshold, offset_x, offset_y
+            search_screen, template, match_threshold, offset_x, offset_y, 1.0
         )
         if result.found:
             return result
 
         best = result
-        for scale in extra_scales:
+        scales = list(extra_scales)
+        if self.setup_capture_size:
+            base_w, base_h = self.setup_capture_size
+            screen_h, screen_w = screen.shape[:2]
+            if base_w > 0 and base_h > 0:
+                width_ratio = screen_w / base_w
+                height_ratio = screen_h / base_h
+                if abs(width_ratio / height_ratio - 1.0) <= 0.05:
+                    adaptive = (width_ratio + height_ratio) / 2.0
+                    scales.extend((adaptive * 0.96, adaptive, adaptive * 1.04))
+        if self.setup_dpi:
+            from .windows_environment import get_dpi_for_point
+
+            region_now = self.capture_region
+            current_dpi = get_dpi_for_point(
+                region_now.left + region_now.width // 2,
+                region_now.top + region_now.height // 2,
+            )
+            dpi_ratio = current_dpi / self.setup_dpi
+            scales.extend((dpi_ratio * 0.96, dpi_ratio, dpi_ratio * 1.04))
+        unique_scales = sorted(
+            {round(scale, 4) for scale in scales if 0.65 <= scale <= 1.50},
+            key=lambda value: abs(value - 1.0),
+        )
+        for scale in unique_scales:
             width = max(10, int(template.shape[1] * scale))
             height = max(10, int(template.shape[0] * scale))
             interpolation = cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LINEAR
             scaled = cv2.resize(template, (width, height), interpolation=interpolation)
             scaled_result = self._find_template_with_offset(
-                search_screen, scaled, match_threshold, offset_x, offset_y
+                search_screen, scaled, match_threshold, offset_x, offset_y, scale
             )
             if scaled_result.confidence > best.confidence:
                 best = scaled_result
             if scaled_result.found:
+                detail_log.debug(
+                    "ボタン一致: %s (類似度 %.3f, scale %.3f)",
+                    template_path,
+                    scaled_result.confidence,
+                    scale,
+                )
                 return scaled_result
 
+        detail_log.debug(
+            "ボタン未一致: %s (最高類似度 %.3f, scale %.3f, 候補=%s)",
+            template_path,
+            best.confidence,
+            best.scale,
+            unique_scales,
+        )
         return best
 
     def _find_template_with_offset(
@@ -197,13 +246,14 @@ class Vision:
         threshold: float,
         offset_x: int,
         offset_y: int,
+        scale: float = 1.0,
     ) -> MatchResult:
         result_h, result_w = template.shape[:2]
         match = cv2.matchTemplate(screen, template, cv2.TM_CCOEFF_NORMED)
         _, max_val, _, max_loc = cv2.minMaxLoc(match)
 
         if max_val < threshold:
-            return MatchResult(False, float(max_val), 0, 0, (0, 0), (0, 0))
+            return MatchResult(False, float(max_val), 0, 0, (0, 0), (0, 0), scale)
 
         top_left = (max_loc[0] + offset_x, max_loc[1] + offset_y)
         bottom_right = (top_left[0] + result_w, top_left[1] + result_h)
@@ -218,6 +268,7 @@ class Vision:
             center_y=abs_y,
             top_left=top_left,
             bottom_right=bottom_right,
+            scale=scale,
         )
 
     def find_on_screen(
@@ -237,9 +288,13 @@ class Vision:
         threshold: float | None = None,
         scales: tuple[float, ...] = (0.85, 0.9, 0.95, 1.0, 1.05, 1.1, 1.15),
     ) -> MatchResult:
-        """後方互換: find_button_on_screen へ委譲"""
-        _ = scales
-        return self.find_button_on_screen(template_path, threshold=threshold)
+        """指定されたスケール候補でボタンを検索する。"""
+        extra = tuple(scale for scale in scales if abs(scale - 1.0) > 1e-6)
+        return self.find_button_on_screen(
+            template_path,
+            threshold=threshold,
+            extra_scales=extra,
+        )
 
     def find_any_on_screen(
         self,
@@ -304,11 +359,27 @@ class Vision:
         if region is not None:
             screen = Vision._crop_region(screen, region)
             reference = Vision._crop_region(reference, region)
+        screen_aspect = screen.shape[1] / max(1, screen.shape[0])
+        reference_aspect = reference.shape[1] / max(1, reference.shape[0])
+        if abs(screen_aspect / reference_aspect - 1.0) > ASPECT_CROP_DELTA:
+            screen = Vision._center_crop_to_aspect(screen, reference_aspect)
         s = cv2.resize(screen, size).astype(np.float32)
         r = cv2.resize(reference, size).astype(np.float32)
         s = (s - s.mean()) / (s.std() + 1e-6)
         r = (r - r.mean()) / (r.std() + 1e-6)
         return float(np.mean(s * r))
+
+    @staticmethod
+    def _center_crop_to_aspect(image: np.ndarray, target_aspect: float) -> np.ndarray:
+        height, width = image.shape[:2]
+        current = width / max(1, height)
+        if current > target_aspect:
+            new_width = max(1, int(height * target_aspect))
+            left = (width - new_width) // 2
+            return image[:, left : left + new_width]
+        new_height = max(1, int(width / target_aspect))
+        top = (height - new_height) // 2
+        return image[top : top + new_height, :]
 
     def detect_best_screen(
         self,

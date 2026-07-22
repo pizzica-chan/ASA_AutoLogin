@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import copy
+import logging
+import os
+import shutil
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Literal
@@ -19,6 +24,8 @@ from .vision import Vision
 CONFIG_PATH = app_root() / "config.yaml"
 EXAMPLE_CONFIG_PATH = app_root() / "config.example.yaml"
 BUNDLED_EXAMPLE_CONFIG_PATH = bundle_root() / "config.example.yaml"
+CONFIG_SCHEMA_VERSION = 1
+logger = logging.getLogger(__name__)
 
 CLICK_MODE_COORDINATES_ONLY = "coordinates_only"
 
@@ -221,8 +228,16 @@ def load_config(config_path: str | Path | None = None) -> dict:
     path = Path(config_path) if config_path else ensure_config_exists()
     if not path.exists():
         raise FileNotFoundError(f"設定ファイルが見つかりません: {path}")
-    with open(path, encoding="utf-8") as f:
-        return yaml.safe_load(f) or {}
+    try:
+        with open(path, encoding="utf-8") as f:
+            loaded = yaml.safe_load(f) or {}
+    except yaml.YAMLError as exc:
+        raise ValueError(
+            f"config.yaml の形式が壊れています。元ファイルは変更していません。\n{exc}"
+        ) from exc
+    if not isinstance(loaded, dict):
+        raise ValueError("config.yaml の最上位は key: value 形式である必要があります。")
+    return normalize_config(loaded)
 
 
 def load_default_config() -> dict:
@@ -237,10 +252,131 @@ def load_default_config() -> dict:
 def save_config(config: dict, config_path: str | Path | None = None) -> None:
     from .default_assets import prune_stale_template_paths
 
+    config = normalize_config(config)
     prune_stale_template_paths(config)
     path = Path(config_path) if config_path else CONFIG_PATH
-    with open(path, "w", encoding="utf-8") as f:
-        yaml.dump(config, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+    text = yaml.dump(
+        config,
+        allow_unicode=True,
+        default_flow_style=False,
+        sort_keys=False,
+    )
+    _atomic_write_config(path, text)
+
+
+def _atomic_write_config(path: Path, text: str) -> None:
+    """正常な旧設定を保持し、同一ディレクトリ内で原子的に置換する。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    backup = path.with_suffix(path.suffix + ".bak")
+    if path.exists():
+        try:
+            current = yaml.safe_load(path.read_text(encoding="utf-8"))
+            if isinstance(current, dict):
+                shutil.copy2(path, backup)
+        except (OSError, UnicodeError, yaml.YAMLError):
+            logger.warning("現在の設定が不正なためバックアップ更新をスキップします: %s", path)
+
+    fd, temp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=path.parent,
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as stream:
+            stream.write(text)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temp_name, path)
+    except Exception:
+        try:
+            os.unlink(temp_name)
+        except OSError:
+            pass
+        raise
+
+
+def restore_config_backup(config_path: str | Path | None = None) -> bool:
+    path = Path(config_path) if config_path else CONFIG_PATH
+    backup = path.with_suffix(path.suffix + ".bak")
+    if not backup.exists():
+        return False
+    loaded = yaml.safe_load(backup.read_text(encoding="utf-8"))
+    if not isinstance(loaded, dict):
+        return False
+    save_config(loaded, path)
+    return True
+
+
+def normalize_config(config: dict) -> dict:
+    """旧設定を保持しつつ、実行不能な型・範囲・列挙値だけを安全値へ直す。"""
+    normalized = copy.deepcopy(config)
+
+    def section(name: str) -> dict:
+        value = normalized.get(name)
+        if not isinstance(value, dict):
+            if value is not None:
+                logger.warning("設定セクション %s を初期化します", name)
+            value = {}
+            normalized[name] = value
+        return value
+
+    display = section("display")
+    retry = section("retry")
+    matching = section("matching")
+    window = section("window")
+    meta = section("meta")
+
+    def enum_value(section: dict, key: str, valid: set[str], default: str) -> None:
+        value = section.get(key, default)
+        if value not in valid:
+            logger.warning("不正な設定 %s=%r を %s に修正します", key, value, default)
+            section[key] = default
+
+    enum_value(display, "capture_mode", {"window", "monitor"}, DEFAULT_CAPTURE_MODE)
+    enum_value(
+        matching,
+        "click_mode",
+        {"image", "image_only", "coordinates", "coordinates_only"},
+        "image",
+    )
+    enum_value(matching, "mods_detect_mode", set(VALID_MODS_DETECT_MODES), "hybrid")
+    enum_value(matching, "mods_screen_region", set(VALID_MODS_SCREEN_REGIONS), "center")
+
+    try:
+        display["monitor_index"] = max(1, int(display.get("monitor_index", 1)))
+    except (TypeError, ValueError):
+        logger.warning("monitor_index を 1 に修正します")
+        display["monitor_index"] = 1
+
+    for field in RETRY_TIMING_FIELDS:
+        raw = retry.get(field.key, field.default)
+        try:
+            value = int(raw) if field.value_type == "int" else float(raw)
+        except (TypeError, ValueError):
+            value = field.default
+        retry[field.key] = max(field.vmin, min(field.vmax, value))
+        if field.value_type == "int":
+            retry[field.key] = int(retry[field.key])
+    for field in MATCHING_FIELDS:
+        try:
+            value = float(matching.get(field.key, field.default))
+        except (TypeError, ValueError):
+            value = field.default
+        matching[field.key] = max(field.vmin, min(field.vmax, value))
+
+    try:
+        retry["max_attempts"] = max(0, int(retry.get("max_attempts", 0)))
+    except (TypeError, ValueError):
+        retry["max_attempts"] = 0
+    try:
+        retry["delay_seconds"] = max(0.0, float(retry.get("delay_seconds", 3.0)))
+    except (TypeError, ValueError):
+        retry["delay_seconds"] = 3.0
+    window["title_contains"] = str(
+        window.get("title_contains") or "ARK: Survival Ascended"
+    )
+    meta["config_schema_version"] = CONFIG_SCHEMA_VERSION
+    return normalized
 
 
 CAPTURE_MODE_OPTIONS: tuple[tuple[str, str], ...] = (
@@ -274,6 +410,26 @@ def build_capture_settings(config: dict) -> CaptureSettings:
     )
 
 
+def build_vision(config: dict) -> Vision:
+    display = config.get("display", {})
+    matching = config.get("matching", {})
+    meta = config.get("meta", {})
+    monitor_index = int(display.get("monitor_index", 1))
+    setup_size = None
+    if meta.get("setup_capture_width") and meta.get("setup_capture_height"):
+        setup_size = (
+            int(meta["setup_capture_width"]),
+            int(meta["setup_capture_height"]),
+        )
+    return Vision(
+        threshold=float(matching.get("threshold", 0.8)),
+        monitor_index=monitor_index,
+        capture_settings=build_capture_settings(config),
+        setup_capture_size=setup_size,
+        setup_dpi=int(meta["setup_dpi"]) if meta.get("setup_dpi") else None,
+    )
+
+
 def apply_ui_overrides(
     config: dict,
     *,
@@ -281,6 +437,7 @@ def apply_ui_overrides(
     delay_seconds: float | None = None,
     monitor_index: int | None = None,
     capture_mode: str | None = None,
+    show_click_indicator: bool | None = None,
     retry_timing: dict[str, float | int] | None = None,
     matching_overrides: dict[str, float | str] | None = None,
     window_overrides: dict[str, str | bool] | None = None,
@@ -301,6 +458,8 @@ def apply_ui_overrides(
         display["monitor_index"] = monitor_index
     if capture_mode is not None:
         display["capture_mode"] = capture_mode
+    if show_click_indicator is not None:
+        display["show_click_indicator"] = show_click_indicator
     if retry_timing:
         for key, value in retry_timing.items():
             retry[key] = value
@@ -332,11 +491,7 @@ def build_automator(
     monitor_index = int(display_cfg.get("monitor_index", 1))
     capture_settings = build_capture_settings(config)
     screen_threshold = float(matching_cfg.get("screen_threshold", matching_cfg.get("threshold", 0.75)))
-    vision = Vision(
-        threshold=float(matching_cfg.get("threshold", 0.8)),
-        monitor_index=monitor_index,
-        capture_settings=capture_settings,
-    )
+    vision = build_vision(config)
 
     templates = TemplateConfig(
         server_list=templates_cfg.get("server_list", "templates/server_list.png"),

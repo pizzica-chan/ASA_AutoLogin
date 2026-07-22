@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import logging
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from src.app_logging import build_runtime_config_snapshot, log_runtime_config_detail
@@ -64,6 +66,24 @@ class ConfigLoggingTests(unittest.TestCase):
         self.assertIn("max_attempts: 1", joined)
         self.assertIn("解決済みランタイム情報", joined)
         self.assertIn("capture_mode: window", joined)
+
+    def test_file_logging_survives_gui_handler_teardown(self) -> None:
+        from src.app_logging import setup_logging, teardown_logging, user_log
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            user_path = Path(temp_dir) / "user.log"
+            detail_path = Path(temp_dir) / "detail.log"
+            with patch(
+                "src.app_logging._resolve_log_paths",
+                return_value=(user_path, detail_path),
+            ):
+                setup_logging({})
+                teardown_logging(close_files=False)
+                user_log.info("after worker")
+                for handler in user_log.handlers:
+                    handler.flush()
+                self.assertIn("after worker", user_path.read_text(encoding="utf-8"))
+                teardown_logging()
 
 
 if __name__ == "__main__":

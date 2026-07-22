@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import queue
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any
 
@@ -115,11 +116,31 @@ def setup_logging(config: dict | None = None, log_queue: queue.Queue | None = No
     user_path.parent.mkdir(parents=True, exist_ok=True)
     detail_path.parent.mkdir(parents=True, exist_ok=True)
 
-    user_file_handler = logging.FileHandler(user_path, encoding="utf-8")
+    log_cfg = (config or {}).get("logging", {})
+    try:
+        max_bytes = max(0, int(log_cfg.get("max_bytes", 5 * 1024 * 1024)))
+    except (TypeError, ValueError):
+        max_bytes = 5 * 1024 * 1024
+    try:
+        backup_count = max(1, int(log_cfg.get("backup_count", 3)))
+    except (TypeError, ValueError):
+        backup_count = 3
+
+    user_file_handler = RotatingFileHandler(
+        user_path,
+        maxBytes=max_bytes,
+        backupCount=backup_count,
+        encoding="utf-8",
+    )
     user_file_handler.setFormatter(logging.Formatter(USER_FORMAT, FILE_DATE_FORMAT))
     user_file_handler.setLevel(user_level)
 
-    detail_file_handler = logging.FileHandler(detail_path, encoding="utf-8")
+    detail_file_handler = RotatingFileHandler(
+        detail_path,
+        maxBytes=max_bytes,
+        backupCount=backup_count,
+        encoding="utf-8",
+    )
     detail_file_handler.setFormatter(logging.Formatter(DETAIL_FORMAT, FILE_DATE_FORMAT))
     detail_file_handler.setLevel(detail_level)
 
@@ -200,6 +221,7 @@ def build_runtime_config_snapshot(
     from .button_templates import ButtonConfig
     from .capture import CaptureSettings, WindowNotFoundError, resolve_capture_region
     from .default_assets import resolve_screen_path, screen_template_source
+    from .windows_environment import environment_snapshot, get_dpi_for_point
 
     display = config.get("display", {})
     window = config.get("window", {})
@@ -214,6 +236,7 @@ def build_runtime_config_snapshot(
         "monitor_index": capture_settings.monitor_index,
         "window_title": window_title or capture_settings.window_title,
         "bring_to_front": bring_to_front,
+        "environment": environment_snapshot(),
     }
 
     if vision is not None:
@@ -230,6 +253,27 @@ def build_runtime_config_snapshot(
             "top": region.top,
             "width": region.width,
             "height": region.height,
+        }
+        current_dpi = get_dpi_for_point(
+            region.left + region.width // 2,
+            region.top + region.height // 2,
+        )
+        meta = config.get("meta", {})
+        baseline_width = meta.get("setup_capture_width")
+        baseline_height = meta.get("setup_capture_height")
+        snapshot["environment_difference"] = {
+            "current_dpi": current_dpi,
+            "setup_dpi": meta.get("setup_dpi"),
+            "width_ratio": (
+                round(region.width / float(baseline_width), 4)
+                if baseline_width
+                else None
+            ),
+            "height_ratio": (
+                round(region.height / float(baseline_height), 4)
+                if baseline_height
+                else None
+            ),
         }
     except WindowNotFoundError as exc:
         snapshot["capture_region"] = f"未解決 ({exc})"
@@ -283,8 +327,15 @@ def build_runtime_config_snapshot(
     return snapshot
 
 
-def teardown_logging() -> None:
-    for handler in _gui_handlers + _file_handlers:
+def teardown_logging(*, close_files: bool = True) -> None:
+    handlers = list(_gui_handlers)
+    if close_files:
+        handlers += list(_file_handlers)
+    for handler in handlers:
+        for logger in (user_log, detail_log):
+            if handler in logger.handlers:
+                logger.removeHandler(handler)
         handler.close()
     _gui_handlers.clear()
-    _file_handlers.clear()
+    if close_files:
+        _file_handlers.clear()

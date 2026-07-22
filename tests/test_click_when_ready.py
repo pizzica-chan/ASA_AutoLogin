@@ -42,17 +42,52 @@ class ClickWhenReadyTests(unittest.TestCase):
             fn = automator._wait_before_click_fn("join_server_list")
         self.assertEqual(fn.__name__, "_wait_for_screen_before_click")
 
-    def test_wait_fn_uses_button_when_template_exists(self) -> None:
+    def test_join_server_list_always_uses_screen_ready_wait(self) -> None:
         automator = self._automator(click_mode="image")
         with patch.object(automator.buttons, "get", return_value="/fake/join.png"):
             fn = automator._wait_before_click_fn("join_server_list")
-        self.assertEqual(fn.__name__, "_wait_for_button")
+        self.assertEqual(fn.__name__, "_wait_for_screen_before_click")
 
     def test_coordinates_mode_prefers_screen_wait_when_ui_point_exists(self) -> None:
         automator = self._automator(click_mode="coordinates")
         with patch.object(automator.buttons, "get", return_value="/fake/join.png"):
             fn = automator._wait_before_click_fn("join_server_list")
         self.assertEqual(fn.__name__, "_wait_for_screen_before_click")
+
+    def test_join_mods_uses_screen_wait_even_in_image_mode(self) -> None:
+        automator = self._automator(click_mode="image")
+        with patch.object(automator.buttons, "get", return_value="/fake/join_mods.png"):
+            fn = automator._wait_before_click_fn("join_mods")
+        self.assertEqual(fn.__name__, "_wait_for_screen_before_click")
+
+    def test_join_game_uses_hybrid_wait_in_image_mode(self) -> None:
+        automator = self._automator(click_mode="image")
+        with patch.object(automator.buttons, "get", return_value="/fake/join_game.png"):
+            fn = automator._wait_before_click_fn("join_game")
+        self.assertEqual(fn.__name__, "_wait_for_screen_before_click")
+
+    def test_back_empty_list_uses_hybrid_wait_in_image_mode(self) -> None:
+        automator = self._automator(click_mode="image")
+        with patch.object(automator.buttons, "get", return_value="/fake/back.png"):
+            fn = automator._wait_before_click_fn("back_empty_list")
+        self.assertEqual(fn.__name__, "_wait_for_screen_before_click")
+
+    @patch("src.login_flow.time.sleep")
+    @patch.object(LoginAutomator, "_click_target", return_value=True)
+    @patch.object(LoginAutomator, "_wait_for_screen_before_click")
+    def test_skip_wait_bypasses_pre_click_wait(
+        self,
+        mock_screen_wait,
+        mock_click,
+        _sleep,
+    ) -> None:
+        automator = self._automator(click_mode="image")
+        with patch.object(automator.buttons, "get", return_value="/fake/join_mods.png"):
+            self.assertTrue(
+                automator._click_target_when_ready("join_mods", "② MODS JOIN", skip_wait=True),
+            )
+        mock_screen_wait.assert_not_called()
+        mock_click.assert_called_once()
 
     @patch("src.login_flow.time.sleep")
     @patch.object(LoginAutomator, "_click_target", return_value=True)

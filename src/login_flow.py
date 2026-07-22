@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import time
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum, auto
+from mss.exception import ScreenShotError
 
 from . import input_handler
 from .app_logging import build_runtime_config_snapshot, detail_log, log_runtime_config_detail, user_log
@@ -27,6 +29,12 @@ MODS_JOIN_SEARCH_REGION = (0.0, 0.0, 0.58, 1.0)
 MODS_SCREEN_COMPARE_REGION = (0.15, 0.08, 0.85, 0.92)
 # ⑤ JOIN GAME は左寄り4枚レイアウトが主流のため、右側の別カード誤検出を避ける
 JOIN_GAME_SEARCH_REGION = (0.0, 0.0, 0.72, 1.0)
+BUTTON_SEARCH_REGIONS = {
+    "join_server_list": (0.55, 0.55, 1.0, 1.0),
+    "cancel_failed": (0.30, 0.25, 0.90, 0.85),
+    "accept_network_failure": (0.20, 0.25, 0.80, 0.85),
+    "back_empty_list": (0.0, 0.60, 0.40, 1.0),
+}
 
 
 class LoginState(Enum):
@@ -126,6 +134,7 @@ class LoginAutomator:
         self._state = LoginState.IDLE
         self._stats = LoginStats()
         self._running = False
+        self._stop_event = threading.Event()
 
     @property
     def state(self) -> LoginState:
@@ -142,9 +151,21 @@ class LoginAutomator:
 
     def stop(self) -> None:
         self._running = False
+        self._stop_event.set()
+        user_log.info("自動ログインの停止を要求しました")
+        detail_log.info("自動ログインの停止を要求しました")
+
+    def _sleep(self, seconds: float) -> bool:
+        """停止要求で即中断。待機完了なら True。"""
+        if seconds <= 0:
+            return not self._stop_event.is_set()
+        return not self._stop_event.wait(seconds)
+
+    def _stopped_result(self) -> LoginState:
         self._set_state(LoginState.STOPPED)
         user_log.info("自動ログインを停止しました")
         detail_log.info("自動ログインを停止しました")
+        return LoginState.STOPPED
 
     def _is_coordinates_only(self) -> bool:
         return self.click_mode == "coordinates_only"
@@ -152,7 +173,14 @@ class LoginAutomator:
     def _focus_game(self) -> bool:
         if not self.bring_to_front:
             return True
-        return input_handler.bring_window_to_front(self.window_title)
+        for attempt in range(3):
+            if input_handler.bring_window_to_front(self.window_title):
+                return True
+            if attempt < 2:
+                detail_log.warning("ARK フォーカス取得を再試行します (%d/3)", attempt + 2)
+                if not self._sleep(0.5):
+                    return False
+        return False
 
     def _screen_map(self) -> dict[str, str]:
         raw = {
@@ -194,6 +222,8 @@ class LoginAutomator:
             search_region = MODS_JOIN_SEARCH_REGION
         if search_region is None and button_key == "join_game":
             search_region = JOIN_GAME_SEARCH_REGION
+        if search_region is None:
+            search_region = BUTTON_SEARCH_REGIONS.get(button_key)
 
         use_strict = strict
         if button_key == "join_game":
@@ -270,18 +300,28 @@ class LoginAutomator:
         mode = self.templates.mods_detect_mode
         score = self._mods_screen_score(screen=screen)
 
-        if mode in ("hybrid", "screen") and self._mods_visible_by_screen(screen, score):
-            return True
-
-        if mode in ("hybrid", "button") and self._mods_visible_by_button(screen):
+        screen_ok = self._mods_visible_by_screen(screen, score)
+        button_result = (
+            self._find_button("join_mods", screen=screen, strict=True)
+            if mode in ("hybrid", "button")
+            else MatchResult(False, 0.0, 0, 0, (0, 0), (0, 0))
+        )
+        if mode == "screen":
+            return screen_ok
+        if mode == "button":
+            return button_result.found
+        if mode == "hybrid":
+            strong_screen = score >= min(0.95, self.templates.mods_screen_threshold + 0.12)
+            strong_button = button_result.confidence >= min(0.95, self.buttons.threshold + 0.08)
+            if not ((screen_ok and button_result.found) or strong_screen or strong_button):
+                return False
+        if button_result.found:
             detail_log.debug(
                 "② MODS 画面を join_mods ボタンで検出 (画面類似度: %.2f, 方式: %s)",
                 score,
                 mode,
             )
-            return True
-
-        return False
+        return mode == "hybrid"
 
     def _wait_for_stable(
         self,
@@ -296,8 +336,12 @@ class LoginAutomator:
         polls = max(1, consecutive if consecutive is not None else self.retry.stable_polls)
         deadline = time.time() + timeout
         stable = 0
+        extended = False
         while self._running and time.time() < deadline:
             if predicate():
+                if not extended and polls > 1:
+                    deadline += self.retry.poll_seconds * (polls - 1)
+                    extended = True
                 stable += 1
                 if stable >= polls:
                     if success_log:
@@ -308,7 +352,8 @@ class LoginAutomator:
                     return True
             else:
                 stable = 0
-            time.sleep(self.retry.poll_seconds)
+            if not self._sleep(self.retry.poll_seconds):
+                return False
 
         if failure_log:
             detail_log.info(failure_log)
@@ -426,8 +471,6 @@ class LoginAutomator:
     def _has_connection_failed_dialog(self, screen=None) -> bool:
         if screen is None:
             screen = self.vision.capture_screen()
-        if not self._is_coordinates_only():
-            return self._find_button("cancel_failed", screen=screen, strict=True).found
         matched, score = self._match_screen("connection_failed", screen=screen)
         if matched:
             detail_log.debug("画面検出: connection_failed (類似度: %.2f)", score)
@@ -446,8 +489,6 @@ class LoginAutomator:
     def _has_network_failure_dialog(self, screen=None) -> bool:
         if screen is None:
             screen = self.vision.capture_screen()
-        if not self._is_coordinates_only():
-            return self._find_button("accept_network_failure", screen=screen, strict=True).found
         matched, score = self._match_screen("network_failure", screen=screen)
         if matched:
             detail_log.debug("画面検出: network_failure (類似度: %.2f)", score)
@@ -577,10 +618,25 @@ class LoginAutomator:
         )
         return False
 
+    def _screen_wait_button_fallback(self, button_key: str) -> str | None:
+        """画面待機でボタン PNG を併用するキー（到達判定とクリック前待機を揃える）"""
+        hybrid_keys = {
+            "back_empty_list",
+            "cancel_failed",
+            "accept_network_failure",
+        }
+        if button_key not in hybrid_keys:
+            return None
+        if self._is_coordinates_only() or self._can_use_button_detection(button_key):
+            return button_key
+        return None
+
     def _wait_for_screen_before_click(self, button_key: str, timeout: float) -> bool:
-        """座標のみモード: クリック前に画面テンプレートで待機"""
+        """クリック前に画面テンプレート（＋必要ならボタン PNG）で待機"""
         if button_key == "join_server_list":
             return self._wait_for_step1_ready(timeout)
+        if button_key == "join_game":
+            return self._wait_for_step5_ready(timeout)
         if button_key == "join_mods":
             stable, score = self._wait_for_mods_dialog_stable(timeout)
             if not stable:
@@ -592,13 +648,15 @@ class LoginAutomator:
         screen_map = {
             "cancel_failed": "connection_failed",
             "back_empty_list": "server_list_empty",
-            "join_game": "main_menu",
             "accept_network_failure": "network_failure",
         }
         screen_name = screen_map.get(button_key)
         if screen_name:
-            fallback_button = button_key if self._is_coordinates_only() else None
-            return self._wait_for_screen(screen_name, timeout, button_key=fallback_button)
+            return self._wait_for_screen(
+                screen_name,
+                timeout,
+                button_key=self._screen_wait_button_fallback(button_key),
+            )
         return True
 
     def _wait_for_button(
@@ -697,8 +755,12 @@ class LoginAutomator:
         deadline = time.time() + timeout
         stable = 0
         polls = consecutive
+        extended = False
         while self._running and time.time() < deadline:
             if predicate():
+                if not extended and polls > 1:
+                    deadline += self.retry.poll_seconds * (polls - 1)
+                    extended = True
                 stable += 1
                 if stable >= polls:
                     msg = success_log()
@@ -709,7 +771,8 @@ class LoginAutomator:
                     return True
             else:
                 stable = 0
-            time.sleep(self.retry.poll_seconds)
+            if not self._sleep(self.retry.poll_seconds):
+                return False
 
         if best_join > 0 or best_menu > 0:
             detail_log.info(
@@ -723,10 +786,20 @@ class LoginAutomator:
 
     def _wait_after_click(self) -> None:
         delay = self.retry.after_click_delay or self.retry.join_click_delay
-        time.sleep(delay)
+        self._sleep(delay)
 
     def _wait_before_click_fn(self, button_key: str):
-        """クリック前の待機: 座標クリック主体は画面テンプレート、画像主体はボタン画像"""
+        """クリック前の待機: 到達判定と同じ基準を優先する"""
+        hybrid_wait_keys = {
+            "join_server_list",
+            "join_mods",
+            "join_game",
+            "back_empty_list",
+            "cancel_failed",
+            "accept_network_failure",
+        }
+        if button_key in hybrid_wait_keys:
+            return self._wait_for_screen_before_click
         if self._is_coordinates_only():
             return self._wait_for_screen_before_click
         if self.click_mode == "coordinates" and ui_point_for_key(self.ui, button_key):
@@ -742,20 +815,26 @@ class LoginAutomator:
         button_key: str,
         label: str,
         timeout: float | None = None,
+        *,
+        skip_wait: bool = False,
     ) -> bool:
         """ボタンが表示されるまで待ってからクリック"""
         wait_timeout = timeout if timeout is not None else self.retry.transition_timeout
         should_wait = (
-            self._is_coordinates_only()
-            or self.buttons.get(button_key)
-            or ui_point_for_key(self.ui, button_key)
+            not skip_wait
+            and (
+                self._is_coordinates_only()
+                or self.buttons.get(button_key)
+                or ui_point_for_key(self.ui, button_key)
+            )
         )
         if should_wait:
             if not self._wait_before_click_fn(button_key)(button_key, wait_timeout):
                 user_log.warning("%s が見つかりませんでした（%d 秒待機）", label, int(wait_timeout))
                 detail_log.warning("%s が %d 秒以内に表示されませんでした", label, int(wait_timeout))
                 return False
-        time.sleep(self.retry.transition_settle)
+        if not self._sleep(self.retry.transition_settle):
+            return False
         return self._click_target(button_key, label)
 
     def _wait_for_screen(
@@ -818,18 +897,34 @@ class LoginAutomator:
                 )
         return False
 
-    def _click(self, point: Point, label: str) -> None:
+    @staticmethod
+    def _click_kind(button_key: str) -> str:
+        return (
+            "recovery"
+            if button_key
+            in {"cancel_failed", "back_empty_list", "accept_network_failure"}
+            else "primary"
+        )
+
+    def _click(self, point: Point, label: str, kind: str = "primary") -> None:
         abs_x, abs_y = self.ui.click_pixels(point)
         detail_log.info("%s を座標クリック (%d, %d)", label, abs_x, abs_y)
-        input_handler.click(abs_x, abs_y)
+        if kind == "primary":
+            input_handler.click(abs_x, abs_y)
+        else:
+            input_handler.click(abs_x, abs_y, kind=kind)
 
     def _click_target(self, button_key: str, label: str) -> bool:
         """ボタン画像を優先してクリック。見つからなければ座標にフォールバック（image_only 除く）"""
+        if not self._running or not self._focus_game():
+            user_log.warning("%s は ARK を前面にできないためクリックしません", label)
+            detail_log.warning("%s: クリック直前のフォーカス確認に失敗", label)
+            return False
         if self._is_coordinates_only():
             fallback = ui_point_for_key(self.ui, button_key)
             if fallback:
                 user_log.info("%s を座標でクリックします", label)
-                self._click(fallback, label)
+                self._click(fallback, label, self._click_kind(button_key))
                 return True
             user_log.error("%s の座標が未設定です", label)
             detail_log.error("%s の座標が未設定です（coordinates_only）", label)
@@ -839,27 +934,38 @@ class LoginAutomator:
             fallback = ui_point_for_key(self.ui, button_key)
             if fallback:
                 user_log.info("%s を座標でクリックします", label)
-                self._click(fallback, label)
+                self._click(fallback, label, self._click_kind(button_key))
                 return True
 
         paths = self.buttons.list_paths(button_key)
         if paths:
             screen = self.vision.capture_screen()
+            strict_modes = (True, False) if button_key == "join_mods" else (True,)
             for attempt in range(3):
-                result = self._find_button(button_key, screen=screen, strict=True)
-                if result.found:
-                    user_log.info("%s をクリックしました", label)
-                    detail_log.info(
-                        "%s を画像認識でクリック (類似度: %.2f, %d, %d)",
-                        label,
-                        result.confidence,
-                        result.center_x,
-                        result.center_y,
-                    )
-                    input_handler.click(result.center_x, result.center_y)
-                    return True
+                for strict in strict_modes:
+                    result = self._find_button(button_key, screen=screen, strict=strict)
+                    if result.found:
+                        user_log.info("%s をクリックしました", label)
+                        detail_log.info(
+                            "%s を画像認識でクリック (類似度: %.2f, %d, %d)",
+                            label,
+                            result.confidence,
+                            result.center_x,
+                            result.center_y,
+                        )
+                        kind = self._click_kind(button_key)
+                        if kind == "primary":
+                            input_handler.click(result.center_x, result.center_y)
+                        else:
+                            input_handler.click(
+                                result.center_x,
+                                result.center_y,
+                                kind=kind,
+                            )
+                        return True
                 if attempt < 2:
-                    time.sleep(0.15)
+                    if not self._sleep(0.15):
+                        return False
                     screen = self.vision.capture_screen()
             user_log.warning("%s を画面上で見つけられませんでした", label)
             detail_log.warning(
@@ -869,6 +975,12 @@ class LoginAutomator:
             )
             best = self._find_button(button_key, strict=False)
             self._log_button_miss(button_key, best, paths, None)
+            if button_key == "join_mods" and best.confidence > 0:
+                detail_log.warning(
+                    "② join_mods.png の再キャプチャ、または join_mods 座標の登録を検討してください"
+                    "（最高類似度: %.2f）",
+                    best.confidence,
+                )
 
         if self.click_mode == "image_only":
             user_log.error("%s をクリックできませんでした（画像のみモード）", label)
@@ -878,7 +990,11 @@ class LoginAutomator:
         fallback = ui_point_for_key(self.ui, button_key)
         if fallback:
             user_log.info("%s を登録座標でクリックしました", label)
-            self._click(fallback, f"{label}（座標フォールバック）")
+            self._click(
+                fallback,
+                f"{label}（座標フォールバック）",
+                self._click_kind(button_key),
+            )
             return True
 
         user_log.error("%s のクリック先が未設定です", label)
@@ -921,7 +1037,11 @@ class LoginAutomator:
 
             for attempt in range(2):
                 self._focus_game()
-                if not self._click_target_when_ready("join_mods", "② MODS JOIN"):
+                if not self._click_target_when_ready(
+                    "join_mods",
+                    "② MODS JOIN",
+                    skip_wait=True,
+                ):
                     user_log.warning("MODS 画面の JOIN に失敗しました")
                     detail_log.warning("② MODS JOIN に失敗しました")
                     return False
@@ -987,7 +1107,8 @@ class LoginAutomator:
                     )
                 else:
                     detail_log.debug("ログインムービー再生中 (類似度: %.2f)", movie_score)
-                time.sleep(self.retry.poll_seconds)
+                if not self._sleep(self.retry.poll_seconds):
+                    return "stopped"
                 continue
 
             if self._has_network_failure_dialog(screen):
@@ -1000,7 +1121,8 @@ class LoginAutomator:
                 detail_log.info("③-A CONNECTION FAILED を検出（CANCEL ボタン）")
                 return "failure_browser"
 
-            time.sleep(self.retry.poll_seconds)
+            if not self._sleep(self.retry.poll_seconds):
+                return "stopped"
 
         if not self._running:
             user_log.info("ログイン待機を中断しました")
@@ -1027,17 +1149,29 @@ class LoginAutomator:
         self._wait_after_click()
 
         self._set_state(LoginState.RECOVERING)
-
-        if not self._click_target_when_ready(
-            "back_empty_list",
-            "④ BACK",
-            timeout=self.retry.recovery_timeout,
-        ):
-            detail_log.warning("④: BACK ボタンが見えませんでした")
-            return False
-        self._wait_after_click()
-
-        return self._return_to_server_list_via_main_menu()
+        deadline = time.time() + self.retry.recovery_timeout
+        while self._running and time.time() < deadline:
+            screen = self.vision.capture_screen()
+            ready, _ = self._is_server_list_ready(screen)
+            if ready:
+                detail_log.info("③-A CANCEL 後に①へ直接戻りました")
+                return True
+            main_ready, _, _ = self._is_main_menu_ready(screen)
+            if main_ready:
+                return self._return_to_server_list_via_main_menu()
+            if self._is_empty_server_list_visible(screen):
+                if not self._click_target_when_ready(
+                    "back_empty_list",
+                    "④ BACK",
+                    timeout=self.retry.transition_timeout,
+                ):
+                    return False
+                self._wait_after_click()
+                return self._return_to_server_list_via_main_menu()
+            if not self._sleep(self.retry.poll_seconds):
+                return False
+        detail_log.warning("③-A CANCEL 後の遷移先を判定できませんでした")
+        return False
 
     def _return_to_server_list_via_main_menu(self) -> bool:
         """⑤ JOIN GAME → ① サーバー一覧へ戻る"""
@@ -1069,16 +1203,17 @@ class LoginAutomator:
         """⑦ タイトル画面（⑥ のダイアログ消去後）を待つ"""
         if resolve_screen_path("title_screen", self.templates.title_screen):
             return self._wait_for_screen("title_screen", timeout)
-
-        return self._wait_for_stable(
-            timeout,
-            lambda: not self._has_network_failure_dialog(),
-            success_log="⑦ タイトル画面に遷移しました（エラーダイアログ消失）",
-        )
+        user_log.warning("タイトル画面の画像がないため、安全のため Space キーを送りません")
+        detail_log.warning("title_screen テンプレート未設定。ダイアログ消失だけでは⑦と判定しません")
+        return False
 
     def _proceed_from_title_screen_to_main_menu(self) -> bool:
         """⑦ Space キー → ⑤ メインメニュー"""
-        time.sleep(self.retry.transition_settle)
+        if not self._sleep(self.retry.transition_settle):
+            return False
+        if not self._focus_game():
+            user_log.warning("ARK を前面にできないため Space キーを送りません")
+            return False
         input_handler.press_key("space")
         detail_log.info("⑦ Space キー押下")
         self._wait_after_click()
@@ -1217,8 +1352,49 @@ class LoginAutomator:
                 "失敗時の復帰が不安定になる場合はフルセットアップを実行してください"
             )
 
+    def _execute_attempt(self) -> str:
+        """1試行を実行し、success/retry/stopped を返す。"""
+        frame = self.vision.capture_screen()
+        if self.vision.is_black_frame(frame):
+            self._stats.failures += 1
+            user_log.warning("ゲーム画面を取得できません（黒画面）。入力せず再試行します")
+            detail_log.warning("実行時キャプチャが黒画面または単色です")
+            return "retry"
+        if not self._ensure_at_step1():
+            self._stats.failures += 1
+            return "retry"
+        if not self._step1_join_server_list():
+            self._stats.failures += 1
+            return "retry"
+        if not self._step2_maybe_join_mods() and self._is_mods_dialog_still_open():
+            user_log.warning("MODS 画面が残っているため、次に進めません")
+            detail_log.warning("② MODS 画面が残っています。③ には進みません")
+            self._stats.failures += 1
+            return "retry"
+
+        result = self._step3_wait_for_login()
+        if not self._running or result == "stopped":
+            return "stopped"
+        if result == "success":
+            return "success"
+        if result == "failure_browser":
+            user_log.info("接続失敗から復帰します…")
+            if not self._recover_after_connection_failed():
+                self._stats.failures += 1
+                user_log.warning("接続失敗からの復帰に失敗しました")
+        elif result == "failure_network":
+            user_log.info("ネットワークエラーから復帰します…")
+            if not self._recover_after_network_failure():
+                self._stats.failures += 1
+                user_log.warning("ネットワークエラーからの復帰に失敗しました")
+        else:
+            self._stats.failures += 1
+            user_log.warning("結果が出なかったため、もう一度試します")
+        return "retry"
+
     def run(self) -> LoginState:
         self._running = True
+        self._stop_event.clear()
         self._stats = LoginStats()
         ensure_default_assets()
         user_log.info("自動ログインを開始します")
@@ -1251,84 +1427,69 @@ class LoginAutomator:
             self._set_state(LoginState.FAILED)
             return LoginState.FAILED
 
+        display_cfg = self.config.get("display", {})
+        show_indicator = bool(display_cfg.get("show_click_indicator", True))
+        input_handler.configure_click_indicator(show_indicator)
+        if show_indicator:
+            user_log.info("クリック位置表示: 有効（青=通常操作、橙=復帰操作）")
+        else:
+            user_log.info("クリック位置表示: 無効")
+
         try:
-            self.vision.capture_screen()
-        except WindowNotFoundError as exc:
-            user_log.error("ARK ウィンドウが見つかりません")
-            detail_log.error("キャプチャ失敗: %s", exc)
-            self._set_state(LoginState.FAILED)
-            return LoginState.FAILED
+            try:
+                self.vision.capture_screen()
+            except WindowNotFoundError as exc:
+                user_log.warning("ARK ウィンドウが見つかりません。起動を待ちます")
+                detail_log.warning("初回キャプチャ失敗（再試行します）: %s", exc)
 
-        while self._running:
-            if not self._should_retry():
-                user_log.error("リトライ上限に達しました")
-                detail_log.error("最大リトライ回数 (%d) に達しました", self.retry.max_attempts)
-                self._set_state(LoginState.FAILED)
-                return LoginState.FAILED
+            while self._running:
+                if not self._should_retry():
+                    user_log.error("リトライ上限に達しました")
+                    detail_log.error("最大リトライ回数 (%d) に達しました", self.retry.max_attempts)
+                    self._set_state(LoginState.FAILED)
+                    return LoginState.FAILED
 
-            self._stats.attempts += 1
-            user_log.info("── 試行 %d回目 ──", self._stats.attempts)
-            detail_log.info("=== 試行 %d回目 ===", self._stats.attempts)
+                self._stats.attempts += 1
+                user_log.info("── 試行 %d回目 ──", self._stats.attempts)
+                detail_log.info("=== 試行 %d回目 ===", self._stats.attempts)
 
-            if not self._focus_game():
-                user_log.warning("ARK のウィンドウが見つかりません。続行します…")
-                detail_log.warning("ゲームウィンドウが見つかりません。続行します...")
-
-            if not self._ensure_at_step1():
-                self._stats.failures += 1
-                time.sleep(self.retry.delay_seconds)
-                continue
-
-            if not self._step1_join_server_list():
-                self._stats.failures += 1
-                time.sleep(self.retry.delay_seconds)
-                continue
-            if not self._step2_maybe_join_mods():
-                if self._is_mods_dialog_still_open():
-                    user_log.warning("MODS 画面が残っているため、次に進めません")
-                    detail_log.warning("② MODS 画面が残っています。③ には進みません")
+                if not self._focus_game():
+                    if not self._running:
+                        break
                     self._stats.failures += 1
-                    time.sleep(self.retry.delay_seconds)
+                    user_log.warning("ARK を前面にできません。入力せず再試行します")
+                    detail_log.warning("フォーカス取得失敗。安全のためこの試行では入力しません")
+                    if not self._sleep(self.retry.delay_seconds):
+                        break
                     continue
 
-            result = self._step3_wait_for_login()
-
-            if not self._running or result == "stopped":
-                return LoginState.STOPPED
-
-            if result == "success":
-                self._set_state(LoginState.SUCCESS)
-                user_log.info(
-                    "ログインに成功しました！（試行 %d回 / %.0f秒）",
-                    self._stats.attempts,
-                    self._stats.elapsed_seconds,
-                )
-                detail_log.info(
-                    "ログイン成功！ 試行回数: %d, 所要時間: %.0f秒",
-                    self._stats.attempts,
-                    self._stats.elapsed_seconds,
-                )
-                return LoginState.SUCCESS
-
-            if result == "failure_browser":
-                user_log.info("接続失敗から復帰します…")
-                detail_log.info("③-A CONNECTION FAILED。③-A → ④ → ⑤ → ① の復帰を開始します")
-                if not self._recover_after_connection_failed():
+                try:
+                    attempt_result = self._execute_attempt()
+                except (WindowNotFoundError, ScreenShotError, OSError) as exc:
                     self._stats.failures += 1
-                    user_log.warning("接続失敗からの復帰に失敗しました")
-                    detail_log.warning("③-A → ④ → ⑤ → ① の復帰に失敗しました")
-            elif result == "failure_network":
-                user_log.info("ネットワークエラーから復帰します…")
-                detail_log.info("⑥ NETWORK FAILURE。⑥ → ⑦ → ⑤ → ① の復帰を開始します")
-                if not self._recover_after_network_failure():
-                    self._stats.failures += 1
-                    user_log.warning("ネットワークエラーからの復帰に失敗しました")
-                    detail_log.warning("⑥ → ⑦ → ⑤ → ① の復帰に失敗しました")
-            else:
-                self._stats.failures += 1
-                user_log.warning("結果が出なかったため、もう一度試します")
-                detail_log.warning("③ がタイムアウトしました。次の試行まで待機します")
+                    user_log.warning("ARK ウィンドウを確認できません。入力せず再試行します")
+                    detail_log.warning("実行中のウィンドウ喪失: %s", exc)
+                    attempt_result = "retry"
 
-            time.sleep(self.retry.delay_seconds)
+                if attempt_result == "stopped":
+                    return self._stopped_result()
+                if attempt_result == "success":
+                    self._set_state(LoginState.SUCCESS)
+                    user_log.info(
+                        "ログインに成功しました！（試行 %d回 / %.0f秒）",
+                        self._stats.attempts,
+                        self._stats.elapsed_seconds,
+                    )
+                    detail_log.info(
+                        "ログイン成功！ 試行回数: %d, 所要時間: %.0f秒",
+                        self._stats.attempts,
+                        self._stats.elapsed_seconds,
+                    )
+                    return LoginState.SUCCESS
 
-        return LoginState.STOPPED
+                if not self._sleep(self.retry.delay_seconds):
+                    break
+
+            return self._stopped_result()
+        finally:
+            input_handler.configure_click_indicator(False)

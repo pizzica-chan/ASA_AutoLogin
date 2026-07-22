@@ -66,6 +66,7 @@ exe = EXE(
     strip=False,
     upx=True,
     console=False,
+    manifest=str(root / "assets" / "ASA_Login.manifest"),
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,

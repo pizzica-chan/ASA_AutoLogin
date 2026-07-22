@@ -88,9 +88,29 @@ def extract_and_save_button_crop(
     bottom = top + crop_h
 
     crop = image[top:bottom, left:right]
+    if crop.size == 0 or crop.shape[1] < min_width or crop.shape[0] < min_height:
+        raise RuntimeError("ボタン切り出し領域が小さすぎます")
+    if float(crop.std()) < 5.0:
+        raise RuntimeError("ボタン切り出し画像が単色に近いため使用できません")
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    cv2.imwrite(str(output_path), crop)
+    if not cv2.imwrite(str(output_path), crop):
+        raise RuntimeError(f"ボタン画像の保存に失敗しました: {output_path}")
     return output_path
+
+
+def verify_button_crop(image_path: Path, crop_path: Path, threshold: float = 0.90) -> float:
+    """保存した切り出し画像が元キャプチャ上で再検出できることを確認する。"""
+    import cv2
+
+    image = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
+    crop = cv2.imread(str(crop_path), cv2.IMREAD_COLOR)
+    if image is None or crop is None:
+        raise RuntimeError("ボタン画像の自己テスト用画像を読み込めません")
+    result = cv2.matchTemplate(image, crop, cv2.TM_CCOEFF_NORMED)
+    _, score, _, _ = cv2.minMaxLoc(result)
+    if score < threshold:
+        raise RuntimeError(f"ボタン画像の自己テストに失敗しました（一致度 {score:.2f}）")
+    return float(score)
 
 
 def ui_point_for_key(ui: UiPositions, key: str) -> Point | None:

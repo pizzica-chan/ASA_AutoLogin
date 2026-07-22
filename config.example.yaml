@@ -3,6 +3,10 @@
 display:
   monitor_index: 1  # ARK を表示しているモニター（1 始まり）
   capture_mode: window  # window = ゲームウィンドウのみ | monitor = モニター全体
+  show_click_indicator: true  # 短いリップルを表示（青=通常操作、橙=復帰操作）
+
+meta:
+  config_schema_version: 1  # セットアップ時の環境基準はウィザードが自動追記
 
 retry:
   max_attempts: 0          # 最大試行回数（0 = 無制限）
@@ -74,3 +78,5 @@ logging:
   detail_file: logs/asa_login_detail.log
   user_level: INFO
   detail_level: DEBUG
+  max_bytes: 5242880  # 1ファイルの上限（5MB、0で無制限）
+  backup_count: 3     # ローテーション時に残す世代数

@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 import mss
 
+logger = logging.getLogger(__name__)
 
 @dataclass
 class MonitorInfo:
@@ -42,5 +44,10 @@ def get_monitor(index: int) -> MonitorInfo:
         if mon.index == index:
             return mon
     if monitors:
+        logger.warning(
+            "指定モニター %s が存在しないため、モニター %s を使用します",
+            index,
+            monitors[0].index,
+        )
         return monitors[0]
     raise RuntimeError("利用可能なモニターがありません")

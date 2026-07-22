@@ -7,6 +7,10 @@ import signal
 import sys
 import time
 
+from src.windows_environment import enable_per_monitor_dpi_awareness
+
+enable_per_monitor_dpi_awareness()
+
 from src.app_logging import setup_logging
 from src.app_service import STATE_LABELS, build_automator, load_config
 from src.gui_app import run_gui

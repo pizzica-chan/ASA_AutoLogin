@@ -55,6 +55,20 @@ class RecoveryDetectionTests(unittest.TestCase):
         screen = np.zeros((900, 1600, 3), dtype=np.uint8)
         self.assertTrue(automator._has_network_failure_dialog(screen=screen))
 
+    @patch.object(LoginAutomator, "_match_screen", return_value=(True, 0.84))
+    @patch.object(LoginAutomator, "_find_button")
+    def test_image_mode_uses_screen_when_button_misses(
+        self,
+        mock_find_button,
+        _mock_match,
+    ) -> None:
+        mock_find_button.return_value = MatchResult(False, 0.30, 0, 0, (0, 0), (0, 0))
+        automator = self._automator()
+        automator.click_mode = "image"
+        screen = np.zeros((900, 1600, 3), dtype=np.uint8)
+        self.assertTrue(automator._has_connection_failed_dialog(screen=screen))
+        mock_find_button.assert_not_called()
+
     @patch.object(LoginAutomator, "_match_screen", return_value=(False, 0.56))
     @patch.object(LoginAutomator, "_find_button")
     def test_step5_ready_uses_join_game_button_in_coordinates_only(

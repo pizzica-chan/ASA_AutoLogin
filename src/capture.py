@@ -8,7 +8,7 @@ from typing import Literal
 import win32gui
 
 from .display import get_monitor
-from .input_handler import find_window
+from .input_handler import select_window
 
 CaptureMode = Literal["monitor", "window"]
 DEFAULT_CAPTURE_MODE: CaptureMode = "window"
@@ -38,9 +38,10 @@ class WindowNotFoundError(RuntimeError):
 
 
 def get_window_client_region(title_contains: str) -> CaptureRegion | None:
-    hwnd = find_window(title_contains)
-    if hwnd is None:
+    selection = select_window(title_contains)
+    if selection is None:
         return None
+    hwnd = selection.hwnd
 
     try:
         client_left, client_top, client_right, client_bottom = win32gui.GetClientRect(hwnd)

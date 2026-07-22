@@ -22,6 +22,8 @@ from .coordinate_preview import percent_from_capture_click
 from .default_assets import ensure_default_assets, resolve_button_path, SETUP_SAMPLES_DIR, prune_stale_template_paths
 from .paths import app_root, bundle_root
 from .capture import CaptureSettings, DEFAULT_CAPTURE_MODE, WindowNotFoundError, resolve_capture_region
+from .button_templates import extract_and_save_button_crop, verify_button_crop
+from .windows_environment import get_dpi_for_point
 
 logger = logging.getLogger(__name__)
 
@@ -332,7 +334,20 @@ def save_setup_config(
             templates[key] = rel_path
     prune_stale_template_paths(config)
 
-    config.pop("buttons", None)
+    buttons = config.setdefault("buttons", {})
+    captured_dir = TEMPLATES_DIR / "buttons" / "captured"
+    for step in SETUP_STEPS:
+        if not step.click_key:
+            continue
+        captured = captured_dir / f"{step.click_key}.png"
+        if captured.exists():
+            existing = str(buttons.get(step.click_key, ""))
+            if existing and "/captured/" not in existing.replace("\\", "/"):
+                logger.info("手動指定のボタン画像を維持: %s=%s", step.click_key, existing)
+                continue
+            buttons[step.click_key] = (
+                f"templates/buttons/captured/{step.click_key}.png"
+            )
 
     matching = config.setdefault("matching", {})
     matching.setdefault("screen_threshold", 0.75)
@@ -348,9 +363,22 @@ def save_setup_config(
     meta["setup_capture_version"] = SETUP_CAPTURE_VERSION
     if capture_settings is not None:
         meta["setup_capture_mode"] = capture_settings.mode
+        try:
+            region = resolve_capture_region(capture_settings, strict_window=True)
+            meta["setup_capture_width"] = region.width
+            meta["setup_capture_height"] = region.height
+            meta["setup_capture_aspect"] = round(region.width / region.height, 6)
+            meta["setup_monitor_index"] = monitor_index
+            meta["setup_dpi"] = get_dpi_for_point(
+                region.left + region.width // 2,
+                region.top + region.height // 2,
+            )
+        except (WindowNotFoundError, OSError) as exc:
+            logger.warning("セットアップ環境情報を保存できませんでした: %s", exc)
 
-    with open(config_path, "w", encoding="utf-8") as f:
-        yaml.dump(config, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+    from .app_service import save_config
+
+    save_config(config, config_path)
 
 
 def _step_registered(step: SetupStep) -> bool:
@@ -405,6 +433,15 @@ class SetupIntroDialog(tk.Toplevel):
             wraplength=480,
             justify=tk.LEFT,
         ).pack(anchor=tk.W, pady=(4, 0))
+        tk.Label(
+            header,
+            text="初回は「最小（推奨）」で ① サーバー一覧だけ登録すれば動作します。",
+            fg=COLORS["accent"],
+            bg=COLORS["bg"],
+            font=("Segoe UI", 10, "bold"),
+            wraplength=480,
+            justify=tk.LEFT,
+        ).pack(anchor=tk.W, pady=(6, 0))
 
         scroll_outer, scroll_inner = _make_scrollable_area(self, bg=COLORS["bg"])
         scroll_outer.pack(fill=tk.BOTH, expand=True, padx=16, pady=(0, 8))
@@ -791,6 +828,19 @@ class ClickCalibrateDialog(tk.Toplevel):
             height=self._img_h,
         )
         data = {"x_percent": x_percent, "y_percent": y_percent}
+        if self._button_key:
+            output = TEMPLATES_DIR / "buttons" / "captured" / f"{self._button_key}.png"
+            try:
+                extract_and_save_button_crop(
+                    self._image_path,
+                    orig_x,
+                    orig_y,
+                    output,
+                )
+                score = verify_button_crop(self._image_path, output)
+                logger.info("環境専用ボタン画像を保存: %s (自己テスト %.2f)", output, score)
+            except RuntimeError as exc:
+                logger.warning("環境専用ボタン画像を生成できませんでした: %s", exc)
         self.result = data
         self.status.configure(text=f"登録しました ({data['x_percent']}%, {data['y_percent']}%)")
         self.after(500, self.destroy)

@@ -9,17 +9,19 @@ import sys
 import threading
 import time
 import tkinter as tk
+import webbrowser
 from pathlib import Path
 from tkinter import messagebox, scrolledtext, ttk
 
 from PIL import Image, ImageTk
 
-from .app_logging import CHANNEL_DETAIL, CHANNEL_USER, setup_logging, teardown_logging, user_log
+from .app_logging import CHANNEL_DETAIL, CHANNEL_USER, detail_log, setup_logging, teardown_logging, user_log
 
 from .app_service import (
     CAPTURE_MODE_LABEL_TO_VALUE,
     CAPTURE_MODE_OPTIONS,
     CAPTURE_MODE_VALUE_TO_LABEL,
+    CLICK_MODE_COORDINATES_ONLY,
     CLICK_MODE_LABEL_TO_VALUE,
     CLICK_MODE_OPTIONS,
     CLICK_MODE_VALUE_TO_LABEL,
@@ -38,6 +40,7 @@ from .app_service import (
     build_automator,
     load_config,
     load_default_config,
+    restore_config_backup,
     save_config,
 )
 from .capture import CaptureSettings, DEFAULT_CAPTURE_MODE, WindowNotFoundError, resolve_capture_region
@@ -45,7 +48,9 @@ from .coordinate_preview import pick_coordinate_on_screen, show_coordinate_previ
 from .display import list_monitors
 from .login_flow import LoginState
 from .paths import app_root, bundle_root, prepare_runtime
-from .setup_wizard import SETUP_CAPTURE_VERSION, run_wizard_gui
+from .preflight_diagnostics import PreflightReport, run_preflight
+from .setup_wizard import SETUP_CAPTURE_VERSION, _place_dialog_near_parent, run_wizard_gui
+from .ui_positions import UiPositions
 
 START_SAMPLE_IMAGE = bundle_root() / "docs" / "setup_samples" / "01_server_list.png"
 
@@ -64,42 +69,11 @@ COLORS = {
     "idle": "#6c757d",
 }
 
-OPERATION_NOTES = """【動作前の準備】
-• 「開始」を押すと確認画面が出ます。サンプル画像の状態にしてください
-• ログイン対象のサーバー行をクリックして選択（オレンジ色にハイライト）
-• 初回は GUI の「セットアップ」ボタンから登録
+QUICK_START_GUIDE = """1. 右下の「セットアップ」で ① サーバー一覧を登録（初回のみ・最小モードで OK）
+2. ARK で接続先サーバーを選択した状態にする
+3. 「▶ 開始」を押す
 
-【自動化の流れ】
-• サーバー一覧で JOIN →（必要なら）MODS で JOIN → ログイン待ち
-• 失敗したら CANCEL や BACK で戻り、自動で再試行します
-
-【サブモニター・キャプチャ範囲】
-• ARK をサブモニターに表示し「ARKモニター」で選択
-• 「キャプチャ範囲」は通常「ゲームウィンドウ」（推奨）。変更後はセットアップ再実行
-• 操作時に ARK が一瞬前面に出ます
-
-【待機時間】
-• 「待ち時間」タブで、各場面の待ち時間を調整できます
-
-【画像認識】
-• うまく動かない場合は「画像認識」タブで一致度やクリック方式を調整
-• 解像度や UI が違う環境では、セットアップの再実行も検討してください
-
-【クリック座標】
-• 「クリック座標」タブで各ボタンの％座標を数値入力できます
-• 各行の「画面で設定」から、モニター上をクリックして座標を登録できます
-• 「座標のみ」モードではクリックはすべて座標、画像は画面判定のみ
-• 「座標プレビュー」で設定位置をモニター上に点表示できます
-
-【ログ】
-• 「ログ」タブ … 進行状況のわかりやすい表示（通常はこちらを見てください）
-• 「詳細ログ」タブ … 画像認識の類似度や座標など、原因調査用の技術情報
-• ファイル: logs/asa_login_user.log / logs/asa_login_detail.log
-
-【その他】
-• 解像度・モニター・キャプチャ範囲変更時は再セットアップが必要
-• 以前のバージョンで保存した画面キャプチャは色がずれている場合がある → 再セットアップを推奨
-• 利用規約に違反する可能性があります。自己責任でご使用ください"""
+詳細は「取扱説明書」、うまくいかないときは「画像認識」「待ち時間」タブを調整してください。"""
 
 
 class StartReadyDialog(tk.Toplevel):
@@ -110,6 +84,8 @@ class StartReadyDialog(tk.Toplevel):
         self.title("開始前の確認")
         self.configure(bg=COLORS["bg"])
         self.resizable(True, True)
+        self._min_width = 520
+        self._min_height = 420
         self.confirmed = False
 
         self.transient(parent)
@@ -184,15 +160,7 @@ class StartReadyDialog(tk.Toplevel):
 
         self.update_idletasks()
         self.minsize(520, 400)
-        parent_x = parent.winfo_rootx()
-        parent_y = parent.winfo_rooty()
-        parent_w = parent.winfo_width()
-        parent_h = parent.winfo_height()
-        dialog_w = self.winfo_width()
-        dialog_h = self.winfo_height()
-        x = parent_x + max(0, (parent_w - dialog_w) // 2)
-        y = parent_y + max(0, (parent_h - dialog_h) // 2)
-        self.geometry(f"+{x}+{y}")
+        _place_dialog_near_parent(self, parent)
 
     def _on_cancel(self) -> None:
         self.confirmed = False
@@ -207,8 +175,8 @@ class LoginApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("ASA_Login")
-        self.geometry("660x900")
-        self.minsize(580, 720)
+        self.geometry("680x780")
+        self.minsize(560, 640)
         self.configure(bg=COLORS["bg"])
 
         self._config = {}
@@ -221,12 +189,14 @@ class LoginApp(tk.Tk):
         self._matching_vars: dict[str, tk.Variable] = {}
         self._ui_coord_vars: dict[str, tuple[tk.DoubleVar, tk.DoubleVar]] = {}
         self._start_config: dict = {}
+        self._preflight_cache: tuple[str, float, PreflightReport] | None = None
         self.click_mode_var = tk.StringVar(value=CLICK_MODE_OPTIONS[0][1])
         self.mods_detect_mode_var = tk.StringVar(value=MODS_DETECT_MODE_OPTIONS[0][1])
         self.mods_screen_region_var = tk.StringVar(value=MODS_SCREEN_REGION_OPTIONS[0][1])
         self.capture_mode_var = tk.StringVar(value=CAPTURE_MODE_OPTIONS[0][1])
         self.window_title_var = tk.StringVar()
         self.bring_to_front_var = tk.BooleanVar(value=True)
+        self.show_click_indicator_var = tk.BooleanVar(value=True)
         self._capture_mode_trace_guard = False
         self._disk_capture_mode = DEFAULT_CAPTURE_MODE
 
@@ -234,9 +204,54 @@ class LoginApp(tk.Tk):
         self._build_ui()
         self._load_settings()
         self.capture_mode_var.trace_add("write", self._on_capture_mode_changed)
+        self.capture_mode_var.trace_add("write", lambda *_: self.after_idle(self._refresh_chrome))
+        self.click_mode_var.trace_add("write", lambda *_: self.after_idle(self._refresh_chrome))
         self._poll_queue()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.after(300, self._show_startup_notices)
+        self._register_click_indicator()
+
+    def _register_click_indicator(self) -> None:
+        from .click_indicator import set_display_handler
+
+        set_display_handler(self._schedule_click_effect)
+
+    def _schedule_click_effect(self, x: int, y: int, kind: str = "primary") -> None:
+        self.after(0, lambda: self._render_click_effect(x, y, kind))
+
+    def _render_click_effect(self, x: int, y: int, kind: str = "primary") -> None:
+        from .click_indicator import spawn_click_effect
+
+        if kind == "primary":
+            spawn_click_effect(None, x, y)
+        else:
+            spawn_click_effect(None, x, y, kind)
+
+    def _preview_click_indicator(self) -> None:
+        from .click_indicator import spawn_click_effect_burst
+
+        try:
+            region = resolve_capture_region(
+                self._get_capture_settings(),
+                strict_window=self._get_capture_settings().mode == "window",
+            )
+        except Exception as exc:
+            messagebox.showwarning("プレビュー", f"キャプチャ領域を取得できませんでした。\n{exc}", parent=self)
+            return
+        x = region.left + region.width // 2
+        y = region.top + region.height // 2
+        spawn_click_effect_burst(self, x, y, count=3, interval_ms=600)
+        self._append_log(
+            f"クリック表示プレビュー: キャプチャ領域中央 ({x}, {y}) に3回表示"
+        )
+        messagebox.showinfo(
+            "クリック表示プレビュー",
+            f"キャプチャ領域の中央 ({x}, {y}) に\n"
+            "控えめな青いリップルを 3 回表示しました。\n\n"
+            "• 見えない場合: フルスクリーン排他表示ではオーバーレイが隠れることがあります\n"
+            "• 詳細ログに「クリック表示: (x, y)」が出ていれば自動ログイン中も動作しています",
+            parent=self,
+        )
 
     def _setup_styles(self) -> None:
         style = ttk.Style(self)
@@ -276,7 +291,7 @@ class LoginApp(tk.Tk):
         style.map("Accent.TButton", background=[("active", COLORS["accent_hover"])])
         style.configure("Danger.TButton", background=COLORS["danger"], foreground="white")
         style.configure("TNotebook", background=COLORS["bg"], borderwidth=0)
-        style.configure("TNotebook.Tab", background=COLORS["surface"], foreground=COLORS["text"], padding=(12, 6))
+        style.configure("TNotebook.Tab", background=COLORS["surface"], foreground=COLORS["text"], padding=(10, 4))
         style.map("TNotebook.Tab", background=[("selected", COLORS["surface2"])])
 
     def _init_timing_vars(self) -> None:
@@ -297,12 +312,21 @@ class LoginApp(tk.Tk):
                 tk.DoubleVar(value=field.default_y),
             )
 
-    def _card(self, parent, title: str) -> ttk.Frame:
-        outer = ttk.Frame(parent, style="Card.TFrame", padding=12)
-        outer.pack(fill=tk.X, pady=(0, 10))
-        ttk.Label(outer, text=title, style="Card.TLabel", font=("Segoe UI", 10, "bold")).pack(anchor=tk.W, pady=(0, 8))
+    def _card(self, parent, title: str | None = None, *, compact: bool = False) -> ttk.Frame:
+        pad = 8 if compact else 10
+        outer = ttk.Frame(parent, style="Card.TFrame", padding=pad)
+        outer.pack(fill=tk.X, pady=(0, 6 if compact else 8))
         body = ttk.Frame(outer, style="Card.TFrame")
-        body.pack(fill=tk.X)
+        if title:
+            ttk.Label(
+                outer,
+                text=title,
+                style="Card.TLabel",
+                font=("Segoe UI", 9, "bold"),
+            ).pack(anchor=tk.W, pady=(0, 4))
+            body.pack(fill=tk.X)
+        else:
+            body.pack(fill=tk.X)
         return body
 
     def _build_ui(self) -> None:
@@ -310,21 +334,63 @@ class LoginApp(tk.Tk):
         self._init_matching_vars()
         self._init_ui_coord_vars()
 
-        main = ttk.Frame(self, padding=16)
+        main = ttk.Frame(self, padding=12)
         main.pack(fill=tk.BOTH, expand=True)
 
         header = ttk.Frame(main)
-        header.pack(fill=tk.X, pady=(0, 12))
-        ttk.Label(header, text="ASA_Login", style="Title.TLabel").pack(side=tk.LEFT)
-        ttk.Label(header, text="ARK: Survival Ascended 自動ログイン", style="Dim.TLabel").pack(side=tk.LEFT, padx=(12, 0), pady=(6, 0))
+        header.pack(fill=tk.X, pady=(0, 6))
+        ttk.Label(header, text="ASA_Login", style="Title.TLabel", font=("Segoe UI", 14, "bold")).pack(side=tk.LEFT)
+        ttk.Label(
+            header,
+            text="ARK 自動ログイン",
+            style="Dim.TLabel",
+            font=("Segoe UI", 9),
+        ).pack(side=tk.LEFT, padx=(10, 0), pady=(4, 0))
 
-        notebook = ttk.Notebook(main)
-        notebook.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+        control = ttk.Frame(main, style="Card.TFrame", padding=8)
+        control.pack(fill=tk.X, pady=(0, 6))
 
-        tab_main = ttk.Frame(notebook, padding=4)
-        tab_timing = ttk.Frame(notebook, padding=4)
-        tab_matching = ttk.Frame(notebook, padding=4)
-        tab_coordinates = ttk.Frame(notebook, padding=4)
+        status_row = ttk.Frame(control, style="Card.TFrame")
+        status_row.pack(fill=tk.X)
+        self.status_label = ttk.Label(status_row, text="待機中", style="Card.TLabel", font=("Segoe UI", 10, "bold"))
+        self.status_label.pack(side=tk.LEFT)
+        self.attempts_label = ttk.Label(status_row, text="試行: 0", style="CardDim.TLabel", font=("Segoe UI", 9))
+        self.attempts_label.pack(side=tk.LEFT, padx=(16, 0))
+        self.failures_label = ttk.Label(status_row, text="失敗: 0", style="CardDim.TLabel", font=("Segoe UI", 9))
+        self.failures_label.pack(side=tk.LEFT, padx=(12, 0))
+        self.elapsed_label = ttk.Label(status_row, text="経過: 0秒", style="CardDim.TLabel", font=("Segoe UI", 9))
+        self.elapsed_label.pack(side=tk.LEFT, padx=(12, 0))
+
+        btn_row = ttk.Frame(control, style="Card.TFrame")
+        btn_row.pack(fill=tk.X, pady=(6, 0))
+        self.start_btn = ttk.Button(btn_row, text="▶  開始", style="Accent.TButton", command=self._on_start)
+        self.start_btn.pack(side=tk.LEFT, padx=(0, 6))
+        self.stop_btn = ttk.Button(
+            btn_row, text="■  停止", style="Danger.TButton", command=self._on_stop, state=tk.DISABLED,
+        )
+        self.stop_btn.pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(btn_row, text="保存", command=self._on_save).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(btn_row, text="初期値", command=self._on_reset_defaults).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Button(btn_row, text="取扱説明書", command=self._on_open_manual).pack(side=tk.RIGHT, padx=(6, 0))
+        self.setup_btn = ttk.Button(btn_row, text="セットアップ", command=self._on_setup)
+        self.setup_btn.pack(side=tk.RIGHT)
+
+        self._paned = ttk.Panedwindow(main, orient=tk.VERTICAL)
+        self._paned.pack(fill=tk.BOTH, expand=True)
+        self._pane_split_applied = False
+
+        settings_host = ttk.Frame(self._paned)
+        log_host = ttk.Frame(self._paned)
+        self._paned.add(settings_host, weight=2)
+        self._paned.add(log_host, weight=5)
+
+        notebook = ttk.Notebook(settings_host)
+        notebook.pack(fill=tk.BOTH, expand=True)
+
+        tab_main = ttk.Frame(notebook, padding=2)
+        tab_timing = ttk.Frame(notebook, padding=2)
+        tab_matching = ttk.Frame(notebook, padding=2)
+        tab_coordinates = ttk.Frame(notebook, padding=2)
         notebook.add(tab_main, text="メイン")
         notebook.add(tab_timing, text="待ち時間")
         notebook.add(tab_matching, text="画像認識")
@@ -335,32 +401,17 @@ class LoginApp(tk.Tk):
         self._build_matching_tab(tab_matching)
         self._build_coordinates_tab(tab_coordinates)
 
-        status_card = ttk.Frame(main, style="Card.TFrame", padding=12)
-        status_card.pack(fill=tk.X, pady=(0, 10))
-        self.status_label = ttk.Label(status_card, text="待機中", style="Status.TLabel")
-        self.status_label.pack(anchor=tk.W)
+        log_header = ttk.Frame(log_host)
+        log_header.pack(fill=tk.X, pady=(0, 4))
+        ttk.Label(log_header, text="ログ", style="TLabel", font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT)
+        ttk.Label(
+            log_header,
+            text="区切りをドラッグしてログ領域の高さを調整できます",
+            style="Dim.TLabel",
+            font=("Segoe UI", 8),
+        ).pack(side=tk.LEFT, padx=(8, 0))
 
-        stats_row = ttk.Frame(status_card, style="Card.TFrame")
-        stats_row.pack(fill=tk.X, pady=(6, 0))
-        self.attempts_label = ttk.Label(stats_row, text="試行: 0", style="CardDim.TLabel")
-        self.attempts_label.pack(side=tk.LEFT, padx=(0, 16))
-        self.failures_label = ttk.Label(stats_row, text="失敗: 0", style="CardDim.TLabel")
-        self.failures_label.pack(side=tk.LEFT, padx=(0, 16))
-        self.elapsed_label = ttk.Label(stats_row, text="経過: 0秒", style="CardDim.TLabel")
-        self.elapsed_label.pack(side=tk.LEFT)
-
-        btn_row = ttk.Frame(main)
-        btn_row.pack(fill=tk.X, pady=(0, 10))
-        self.start_btn = ttk.Button(btn_row, text="▶  開始", style="Accent.TButton", command=self._on_start)
-        self.start_btn.pack(side=tk.LEFT, padx=(0, 8))
-        self.stop_btn = ttk.Button(btn_row, text="■  停止", style="Danger.TButton", command=self._on_stop, state=tk.DISABLED)
-        self.stop_btn.pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Button(btn_row, text="設定を保存", command=self._on_save).pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Button(btn_row, text="初期値に戻す", command=self._on_reset_defaults).pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Button(btn_row, text="セットアップ", command=self._on_setup).pack(side=tk.RIGHT)
-
-        log_card = self._card(main, "ログ")
-        self.log_notebook = ttk.Notebook(log_card)
+        self.log_notebook = ttk.Notebook(log_host)
         self.log_notebook.pack(fill=tk.BOTH, expand=True)
 
         user_tab = ttk.Frame(self.log_notebook)
@@ -372,83 +423,123 @@ class LoginApp(tk.Tk):
         self.detail_log_text = self._create_log_text(detail_tab, font=("Consolas", 9))
         self.log_notebook.select(user_tab)
 
+        self.after_idle(self._apply_default_pane_split)
+        self._paned.bind("<Configure>", self._apply_default_pane_split, add="+")
+
+    def _apply_default_pane_split(self, _event: tk.Event | None = None) -> None:
+        """設定エリアとログの初期分割（上 35% / 下 65% 目安）"""
+        if getattr(self, "_pane_split_applied", False):
+            return
+        try:
+            height = self._paned.winfo_height()
+            if height > 120:
+                self._paned.sashpos(0, max(140, int(height * 0.35)))
+                self._pane_split_applied = True
+        except tk.TclError:
+            pass
+
     def _create_log_text(self, parent: tk.Misc, *, font: tuple[str, int]) -> scrolledtext.ScrolledText:
         widget = scrolledtext.ScrolledText(
             parent,
-            height=8,
             bg=COLORS["surface2"],
             fg=COLORS["text"],
             insertbackground=COLORS["text"],
             relief=tk.FLAT,
             font=font,
             state=tk.DISABLED,
+            wrap=tk.WORD,
         )
         widget.pack(fill=tk.BOTH, expand=True)
         return widget
 
     def _build_main_tab(self, parent: ttk.Frame) -> None:
-        notes_card = self._card(parent, "注意事項")
-        self.notes_text = scrolledtext.ScrolledText(
-            notes_card,
-            height=9,
-            bg=COLORS["surface2"],
-            fg=COLORS["text_dim"],
-            relief=tk.FLAT,
-            font=("Segoe UI", 9),
-            wrap=tk.WORD,
-            state=tk.DISABLED,
-            cursor="arrow",
-        )
-        self.notes_text.pack(fill=tk.X)
-        self.notes_text.configure(state=tk.NORMAL)
-        self.notes_text.insert(tk.END, OPERATION_NOTES)
-        self.notes_text.configure(state=tk.DISABLED)
+        scroll_body = self._build_scrollable_tab(parent)
 
-        display_card = self._card(parent, "モニター")
-        monitor_row = ttk.Frame(display_card, style="Card.TFrame")
-        monitor_row.pack(fill=tk.X, pady=3)
-        ttk.Label(monitor_row, text="ARK を表示しているモニター", style="Card.TLabel", width=28).pack(side=tk.LEFT)
+        overview = self._card(scroll_body, "準備状況", compact=True)
+        self.readiness_label = tk.Label(
+            overview,
+            text="確認中…",
+            fg=COLORS["text"],
+            bg=COLORS["surface"],
+            font=("Segoe UI", 9),
+            justify=tk.LEFT,
+            anchor=tk.W,
+            wraplength=560,
+        )
+        self.readiness_label.pack(fill=tk.X, anchor=tk.W)
+        ttk.Button(
+            overview,
+            text="診断情報をコピー",
+            command=self._copy_diagnostics,
+        ).pack(anchor=tk.E, pady=(6, 0))
+        ttk.Separator(overview, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=6)
+        ttk.Label(
+            overview,
+            text=QUICK_START_GUIDE,
+            style="CardDim.TLabel",
+            wraplength=560,
+            justify=tk.LEFT,
+            font=("Segoe UI", 9),
+        ).pack(anchor=tk.W)
+
+        display_card = self._card(scroll_body, "モニター・キャプチャ", compact=True)
+        display_row = ttk.Frame(display_card, style="Card.TFrame")
+        display_row.pack(fill=tk.X)
+        ttk.Label(display_row, text="モニター", style="Card.TLabel", width=10).pack(side=tk.LEFT)
         self._monitors = list_monitors()
         self._monitor_label_to_index = {m.label: m.index for m in self._monitors}
         self._monitor_index_to_label = {m.index: m.label for m in self._monitors}
         default_label = self._monitors[0].label if self._monitors else "モニター 1"
         self.monitor_var = tk.StringVar(value=default_label)
         monitor_menu = tk.OptionMenu(
-            monitor_row,
+            display_row,
             self.monitor_var,
             *[m.label for m in self._monitors],
         )
-        monitor_menu.configure(
-            bg=COLORS["surface2"],
-            fg=COLORS["text"],
-            activebackground=COLORS["accent"],
-            activeforeground="#ffffff",
-            highlightthickness=1,
-            highlightbackground=COLORS["border"],
-            highlightcolor=COLORS["accent"],
-            relief=tk.FLAT,
-            font=("Segoe UI", 10),
-            width=24,
-        )
-        monitor_menu["menu"].configure(
-            bg=COLORS["surface2"],
-            fg=COLORS["text"],
-            activebackground=COLORS["accent"],
-            activeforeground="#ffffff",
-            relief=tk.FLAT,
-            font=("Segoe UI", 10),
-        )
-        monitor_menu.pack(side=tk.LEFT, ipady=2)
+        self._style_option_menu(monitor_menu, width=18)
+        monitor_menu.pack(side=tk.LEFT, padx=(0, 16))
 
-        capture_row = ttk.Frame(display_card, style="Card.TFrame")
-        capture_row.pack(fill=tk.X, pady=3)
-        ttk.Label(capture_row, text="キャプチャ範囲", style="Card.TLabel", width=28).pack(side=tk.LEFT)
+        ttk.Label(display_row, text="キャプチャ", style="Card.TLabel", width=10).pack(side=tk.LEFT)
         capture_menu = tk.OptionMenu(
-            capture_row,
+            display_row,
             self.capture_mode_var,
             *[label for _value, label in CAPTURE_MODE_OPTIONS],
         )
-        capture_menu.configure(
+        self._style_option_menu(capture_menu, width=22)
+        capture_menu.pack(side=tk.LEFT)
+
+        retry_card = self._card(scroll_body, "リトライ", compact=True)
+        retry_row = ttk.Frame(retry_card, style="Card.TFrame")
+        retry_row.pack(fill=tk.X)
+        ttk.Label(retry_row, text="最大試行", style="Card.TLabel", width=10).pack(side=tk.LEFT)
+        self.max_attempts_var = tk.IntVar(value=0)
+        ttk.Spinbox(
+            retry_row,
+            from_=0,
+            to=9999,
+            textvariable=self.max_attempts_var,
+            width=6,
+            style="Dark.TSpinbox",
+            font=("Segoe UI", 9),
+        ).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Label(retry_row, text="0=無制限", style="CardDim.TLabel", font=("Segoe UI", 8)).pack(side=tk.LEFT, padx=(0, 16))
+
+        ttk.Label(retry_row, text="間隔", style="Card.TLabel", width=6).pack(side=tk.LEFT)
+        self.delay_var = tk.DoubleVar(value=3.0)
+        ttk.Spinbox(
+            retry_row,
+            from_=0.5,
+            to=60.0,
+            increment=0.5,
+            textvariable=self.delay_var,
+            width=6,
+            style="Dark.TSpinbox",
+            font=("Segoe UI", 9),
+        ).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Label(retry_row, text="秒", style="CardDim.TLabel", font=("Segoe UI", 8)).pack(side=tk.LEFT)
+
+    def _style_option_menu(self, menu: tk.OptionMenu, *, width: int) -> None:
+        menu.configure(
             bg=COLORS["surface2"],
             fg=COLORS["text"],
             activebackground=COLORS["accent"],
@@ -457,40 +548,17 @@ class LoginApp(tk.Tk):
             highlightbackground=COLORS["border"],
             highlightcolor=COLORS["accent"],
             relief=tk.FLAT,
-            font=("Segoe UI", 10),
-            width=24,
+            font=("Segoe UI", 9),
+            width=width,
         )
-        capture_menu["menu"].configure(
+        menu["menu"].configure(
             bg=COLORS["surface2"],
             fg=COLORS["text"],
             activebackground=COLORS["accent"],
             activeforeground="#ffffff",
             relief=tk.FLAT,
-            font=("Segoe UI", 10),
+            font=("Segoe UI", 9),
         )
-        capture_menu.pack(side=tk.LEFT, ipady=2)
-        ttk.Label(
-            display_card,
-            text="「ゲームウィンドウ」は ARK の描画領域のみを対象にします。モード変更後はセットアップの再実行を推奨します。",
-            style="CardDim.TLabel",
-            wraplength=560,
-            justify=tk.LEFT,
-        ).pack(anchor=tk.W, pady=(0, 6))
-
-        retry_card = self._card(parent, "リトライ")
-        retry_grid = ttk.Frame(retry_card, style="Card.TFrame")
-        retry_grid.pack(fill=tk.X)
-
-        ttk.Label(retry_grid, text="最大試行回数", style="Card.TLabel").grid(row=0, column=0, sticky=tk.W, pady=3)
-        self.max_attempts_var = tk.IntVar(value=0)
-        ttk.Spinbox(retry_grid, from_=0, to=9999, textvariable=self.max_attempts_var, width=8, style="Dark.TSpinbox", font=("Segoe UI", 10)).grid(row=0, column=1, sticky=tk.W, padx=(8, 24))
-        ttk.Label(retry_grid, text="0 = 無制限", style="CardDim.TLabel").grid(row=0, column=2, sticky=tk.W)
-
-        ttk.Label(retry_grid, text="リトライ間隔", style="Card.TLabel").grid(row=1, column=0, sticky=tk.W, pady=3)
-        self.delay_var = tk.DoubleVar(value=3.0)
-        ttk.Spinbox(retry_grid, from_=0.5, to=60.0, increment=0.5, textvariable=self.delay_var, width=8, style="Dark.TSpinbox", font=("Segoe UI", 10)).grid(row=1, column=1, sticky=tk.W, padx=(8, 0))
-        ttk.Label(retry_grid, text="秒（失敗して①に戻ったあと、次の試行までの待ち）", style="CardDim.TLabel").grid(row=1, column=2, sticky=tk.W, padx=(8, 0))
-        ttk.Label(retry_grid, text="場面ごとの待ち時間は「待ち時間」タブ、認識の調整は「画像認識」タブ", style="CardDim.TLabel").grid(row=2, column=0, columnspan=3, sticky=tk.W, pady=(6, 0))
 
     def _build_scrollable_tab(self, parent: ttk.Frame) -> ttk.Frame:
         canvas = tk.Canvas(parent, bg=COLORS["bg"], highlightthickness=0)
@@ -500,15 +568,27 @@ class LoginApp(tk.Tk):
             "<Configure>",
             lambda _e: canvas.configure(scrollregion=canvas.bbox("all")),
         )
-        canvas.create_window((0, 0), window=scroll_body, anchor=tk.NW)
+        canvas_window = canvas.create_window((0, 0), window=scroll_body, anchor=tk.NW)
         canvas.configure(yscrollcommand=scrollbar.set)
         canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
+        def _on_canvas_configure(event: tk.Event) -> None:
+            canvas.itemconfigure(canvas_window, width=event.width)
+
+        canvas.bind("<Configure>", _on_canvas_configure)
+
         def _on_mousewheel(event: tk.Event) -> None:
             canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
-        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+        def _bind_wheel(_event: tk.Event | None = None) -> None:
+            canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
+        def _unbind_wheel(_event: tk.Event | None = None) -> None:
+            canvas.unbind_all("<MouseWheel>")
+
+        canvas.bind("<Enter>", _bind_wheel)
+        canvas.bind("<Leave>", _unbind_wheel)
         return scroll_body
 
     def _add_numeric_setting_rows(
@@ -530,21 +610,18 @@ class LoginApp(tk.Tk):
                     text=current_group,
                     fg=COLORS["accent"],
                     bg=COLORS["surface"],
-                    font=("Segoe UI", 10, "bold"),
-                ).grid(row=row, column=0, columnspan=2, sticky=tk.W, pady=(10 if row else 0, 4))
+                    font=("Segoe UI", 9, "bold"),
+                ).grid(row=row, column=0, columnspan=2, sticky=tk.W, pady=(6 if row else 0, 2))
                 row += 1
 
-            label_frame = ttk.Frame(grid, style="Card.TFrame")
-            label_frame.grid(row=row, column=0, sticky=tk.NW, pady=6, padx=(0, 12))
-            ttk.Label(label_frame, text=field.label, style="Card.TLabel", wraplength=260, justify=tk.LEFT).pack(anchor=tk.W)
             ttk.Label(
-                label_frame,
-                text=field.help,
-                style="CardDim.TLabel",
-                wraplength=260,
+                grid,
+                text=field.label,
+                style="Card.TLabel",
+                wraplength=240,
                 justify=tk.LEFT,
                 font=("Segoe UI", 9),
-            ).pack(anchor=tk.W, pady=(2, 0))
+            ).grid(row=row, column=0, sticky=tk.W, pady=2, padx=(0, 8))
 
             var = vars_map[field.key]
             if field.value_type == "int":
@@ -554,9 +631,9 @@ class LoginApp(tk.Tk):
                     to=int(field.vmax),
                     increment=int(field.increment),
                     textvariable=var,
-                    width=8,
+                    width=7,
                     style="Dark.TSpinbox",
-                    font=("Segoe UI", 10),
+                    font=("Segoe UI", 9),
                 )
             else:
                 widget = ttk.Spinbox(
@@ -565,16 +642,21 @@ class LoginApp(tk.Tk):
                     to=field.vmax,
                     increment=field.increment,
                     textvariable=var,
-                    width=8,
+                    width=7,
                     style="Dark.TSpinbox",
-                    font=("Segoe UI", 10),
+                    font=("Segoe UI", 9),
                 )
-            widget.grid(row=row, column=1, sticky=tk.NW, pady=6)
-            ttk.Label(
+            widget.grid(row=row, column=1, sticky=tk.W, pady=2)
+            row += 1
+            tk.Label(
                 grid,
-                text=f"既定: {field.default:g}",
-                style="CardDim.TLabel",
-            ).grid(row=row, column=2, sticky=tk.NW, padx=(8, 0), pady=6)
+                text=f"  {field.help}",
+                fg=COLORS["text_dim"],
+                bg=COLORS["surface"],
+                font=("Segoe UI", 8),
+                wraplength=430,
+                justify=tk.LEFT,
+            ).grid(row=row, column=0, columnspan=2, sticky=tk.W, pady=(0, 3))
             row += 1
 
     def _add_option_row(
@@ -584,179 +666,109 @@ class LoginApp(tk.Tk):
         variable: tk.StringVar,
         options: tuple[tuple[str, str], ...],
         *,
-        help_text: str = "",
+        menu_width: int = 28,
     ) -> None:
         row_frame = ttk.Frame(parent, style="Card.TFrame")
-        row_frame.pack(fill=tk.X, pady=6)
-        label_col = ttk.Frame(row_frame, style="Card.TFrame")
-        label_col.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 12))
-        ttk.Label(label_col, text=label, style="Card.TLabel", wraplength=260, justify=tk.LEFT).pack(anchor=tk.W)
-        if help_text:
-            ttk.Label(
-                label_col,
-                text=help_text,
-                style="CardDim.TLabel",
-                wraplength=360,
-                justify=tk.LEFT,
-                font=("Segoe UI", 9),
-            ).pack(anchor=tk.W, pady=(2, 0))
-
+        row_frame.pack(fill=tk.X, pady=3)
+        ttk.Label(
+            row_frame,
+            text=label,
+            style="Card.TLabel",
+            width=14,
+            font=("Segoe UI", 9),
+        ).pack(side=tk.LEFT)
         option_menu = tk.OptionMenu(row_frame, variable, *[opt_label for _opt_value, opt_label in options])
-        option_menu.configure(
-            bg=COLORS["surface2"],
-            fg=COLORS["text"],
-            activebackground=COLORS["accent"],
-            activeforeground="#ffffff",
-            highlightthickness=1,
-            highlightbackground=COLORS["border"],
-            width=28,
-        )
-        option_menu["menu"].configure(bg=COLORS["surface2"], fg=COLORS["text"])
-        option_menu.pack(side=tk.RIGHT, anchor=tk.N)
+        self._style_option_menu(option_menu, width=menu_width)
+        option_menu.pack(side=tk.LEFT)
 
     def _build_timing_tab(self, parent: ttk.Frame) -> None:
-        intro = ttk.Label(
-            parent,
-            text="①〜⑦ の各場面でどれくらい待つかを設定します。環境によっては少し長めにすると安定します。",
-            style="Dim.TLabel",
-            wraplength=600,
-        )
-        intro.pack(anchor=tk.W, pady=(0, 8))
-
         scroll_body = self._build_scrollable_tab(parent)
-        timing_card = self._card(scroll_body, "場面ごとの待ち時間")
+        timing_card = self._card(scroll_body, "場面ごとの待ち時間", compact=True)
         self._add_numeric_setting_rows(timing_card, RETRY_TIMING_FIELDS, self._timing_vars)
 
     def _build_matching_tab(self, parent: ttk.Frame) -> None:
-        intro = ttk.Label(
-            parent,
-            text="画面やボタンの認識精度を調整します。誤クリックが多い場合は一致度を上げ、見逃しが多い場合は下げてください。",
-            style="Dim.TLabel",
-            wraplength=600,
-        )
-        intro.pack(anchor=tk.W, pady=(0, 8))
-
         scroll_body = self._build_scrollable_tab(parent)
-        matching_card = self._card(scroll_body, "画像認識の感度")
+        matching_card = self._card(scroll_body, "画像認識の感度", compact=True)
         self._add_numeric_setting_rows(matching_card, MATCHING_FIELDS, self._matching_vars)
 
-        mods_card = self._card(scroll_body, "② MODS 画面の検出")
+        mods_card = self._card(scroll_body, "② MODS 画面", compact=True)
+        self._add_option_row(mods_card, "検出方式", self.mods_detect_mode_var, MODS_DETECT_MODE_OPTIONS, menu_width=24)
         self._add_option_row(
             mods_card,
-            "検出方式",
-            self.mods_detect_mode_var,
-            MODS_DETECT_MODE_OPTIONS,
-            help_text=(
-                "ハイブリッド（推奨）: 画面テンプレートで判定し、弱い場合は JOIN ボタン画像でも確認。"
-                "座標のみモードでもクリックは座標のままです。"
-            ),
-        )
-        self._add_option_row(
-            mods_card,
-            "画面比較範囲",
+            "比較範囲",
             self.mods_screen_region_var,
             MODS_SCREEN_REGION_OPTIONS,
-            help_text="中央モーダル（推奨）: 背景のサーバー一覧の差を無視して MODS 本体だけ比較します。",
+            menu_width=24,
         )
 
-        window_card = self._card(scroll_body, "ウィンドウ")
+        window_card = self._card(scroll_body, "ウィンドウ", compact=True)
         title_row = ttk.Frame(window_card, style="Card.TFrame")
-        title_row.pack(fill=tk.X, pady=3)
-        ttk.Label(title_row, text="ARK ウィンドウのタイトル", style="Card.TLabel", width=28).pack(side=tk.LEFT)
+        title_row.pack(fill=tk.X, pady=2)
+        ttk.Label(title_row, text="タイトル", style="Card.TLabel", width=10).pack(side=tk.LEFT)
         ttk.Entry(
             title_row,
             textvariable=self.window_title_var,
-            width=36,
+            width=42,
             style="Dark.TEntry",
-            font=("Segoe UI", 10),
-        ).pack(side=tk.LEFT, ipady=2)
-        ttk.Label(
-            window_card,
-            text="ウィンドウタイトルに含まれる文字列（部分一致）。通常は変更不要です。",
-            style="CardDim.TLabel",
-            wraplength=560,
-            justify=tk.LEFT,
-        ).pack(anchor=tk.W, pady=(0, 6))
+            font=("Segoe UI", 9),
+        ).pack(side=tk.LEFT, ipady=1)
 
-        front_row = ttk.Frame(window_card, style="Card.TFrame")
-        front_row.pack(fill=tk.X, pady=3)
+        flags_row = ttk.Frame(window_card, style="Card.TFrame")
+        flags_row.pack(fill=tk.X, pady=2)
         ttk.Checkbutton(
-            front_row,
+            flags_row,
             text="操作前に ARK を前面に出す",
             variable=self.bring_to_front_var,
             style="TCheckbutton",
-        ).pack(anchor=tk.W)
-        ttk.Label(
-            window_card,
-            text="サブモニター運用では通常オンのままにしてください。",
-            style="CardDim.TLabel",
-            wraplength=560,
-            justify=tk.LEFT,
-        ).pack(anchor=tk.W)
+        ).pack(side=tk.LEFT, padx=(0, 16))
+        ttk.Checkbutton(
+            flags_row,
+            text="クリック位置を表示",
+            variable=self.show_click_indicator_var,
+            style="TCheckbutton",
+        ).pack(side=tk.LEFT)
+        ttk.Button(
+            flags_row,
+            text="プレビュー",
+            command=self._preview_click_indicator,
+        ).pack(side=tk.LEFT, padx=(8, 0))
 
     def _build_coordinates_tab(self, parent: ttk.Frame) -> None:
-        intro = ttk.Label(
-            parent,
-            text="クリック位置を画面の％座標で指定します。「座標のみ」モードでは、クリックはすべてここで設定した座標を使い、画像認識は画面遷移の判定だけに使います。",
-            style="Dim.TLabel",
-            wraplength=600,
-        )
-        intro.pack(anchor=tk.W, pady=(0, 8))
-
         scroll_body = self._build_scrollable_tab(parent)
 
-        mode_card = self._card(scroll_body, "クリック方式")
+        mode_card = self._card(scroll_body, "クリック方式", compact=True)
         mode_row = ttk.Frame(mode_card, style="Card.TFrame")
-        mode_row.pack(fill=tk.X, pady=3)
-        ttk.Label(mode_row, text="モード", style="Card.TLabel", width=20).pack(side=tk.LEFT, anchor=tk.N)
+        mode_row.pack(fill=tk.X)
+        ttk.Label(mode_row, text="モード", style="Card.TLabel", width=10).pack(side=tk.LEFT)
         click_menu = tk.OptionMenu(
             mode_row,
             self.click_mode_var,
             *[label for _value, label in CLICK_MODE_OPTIONS],
         )
-        click_menu.configure(
-            bg=COLORS["surface2"],
-            fg=COLORS["text"],
-            activebackground=COLORS["accent"],
-            activeforeground="#ffffff",
-            highlightthickness=1,
-            highlightbackground=COLORS["border"],
-            highlightcolor=COLORS["accent"],
-            relief=tk.FLAT,
-            font=("Segoe UI", 10),
-            width=48,
-        )
-        click_menu["menu"].configure(
-            bg=COLORS["surface2"],
-            fg=COLORS["text"],
-            activebackground=COLORS["accent"],
-            activeforeground="#ffffff",
-            relief=tk.FLAT,
-            font=("Segoe UI", 10),
-        )
-        click_menu.pack(side=tk.LEFT, ipady=2)
+        self._style_option_menu(click_menu, width=42)
+        click_menu.pack(side=tk.LEFT)
 
-        coord_card = self._card(scroll_body, "クリック座標（％）")
+        coord_card = self._card(scroll_body, "クリック座標（％）", compact=True)
         grid = ttk.Frame(coord_card, style="Card.TFrame")
         grid.pack(fill=tk.X)
-        ttk.Label(grid, text="操作", style="Card.TLabel").grid(row=0, column=0, sticky=tk.W, pady=4)
-        ttk.Label(grid, text="X (%)", style="Card.TLabel").grid(row=0, column=1, sticky=tk.W, padx=(8, 4))
-        ttk.Label(grid, text="Y (%)", style="Card.TLabel").grid(row=0, column=2, sticky=tk.W, padx=(8, 4))
+        ttk.Label(grid, text="操作", style="Card.TLabel", font=("Segoe UI", 9)).grid(row=0, column=0, sticky=tk.W, pady=2)
+        ttk.Label(grid, text="X", style="Card.TLabel", font=("Segoe UI", 9)).grid(row=0, column=1, sticky=tk.W, padx=(8, 4))
+        ttk.Label(grid, text="Y", style="Card.TLabel", font=("Segoe UI", 9)).grid(row=0, column=2, sticky=tk.W, padx=(8, 4))
         ttk.Label(grid, text="", style="Card.TLabel").grid(row=0, column=3, sticky=tk.W, padx=(8, 0))
 
         for row, field in enumerate(UI_CLICK_FIELDS, start=1):
             label = field.label + ("" if field.required else "（任意）")
-            ttk.Label(grid, text=label, style="Card.TLabel", wraplength=220).grid(
-                row=row, column=0, sticky=tk.W, pady=3, padx=(0, 8),
+            ttk.Label(grid, text=label, style="Card.TLabel", wraplength=180, font=("Segoe UI", 9)).grid(
+                row=row, column=0, sticky=tk.W, pady=2, padx=(0, 8),
             )
             x_var, y_var = self._ui_coord_vars[field.key]
             ttk.Spinbox(
-                grid, from_=0.0, to=100.0, increment=0.5, textvariable=x_var, width=8,
-                style="Dark.TSpinbox", font=("Segoe UI", 10),
+                grid, from_=0.0, to=100.0, increment=0.5, textvariable=x_var, width=7,
+                style="Dark.TSpinbox", font=("Segoe UI", 9),
             ).grid(row=row, column=1, sticky=tk.W)
             ttk.Spinbox(
-                grid, from_=0.0, to=100.0, increment=0.5, textvariable=y_var, width=8,
-                style="Dark.TSpinbox", font=("Segoe UI", 10),
+                grid, from_=0.0, to=100.0, increment=0.5, textvariable=y_var, width=7,
+                style="Dark.TSpinbox", font=("Segoe UI", 9),
             ).grid(row=row, column=2, sticky=tk.W, padx=(8, 0))
             ttk.Button(
                 grid,
@@ -764,22 +776,7 @@ class LoginApp(tk.Tk):
                 command=lambda key=field.key, op_label=field.label: self._on_pick_ui_coordinate(key, op_label),
             ).grid(row=row, column=3, sticky=tk.W, padx=(8, 0))
 
-        ttk.Label(
-            coord_card,
-            text="左上が (0, 0)、右下が (100, 100) です。％はキャプチャ範囲（ゲームウィンドウまたはモニター）基準です。",
-            style="CardDim.TLabel",
-            wraplength=560,
-            justify=tk.LEFT,
-        ).pack(anchor=tk.W, pady=(8, 0))
-
-        preview_card = self._card(scroll_body, "座標プレビュー")
-        ttk.Label(
-            preview_card,
-            text="ARK を表示しているモニター上に、設定した座標を色付きの点で重ねて表示します。",
-            style="CardDim.TLabel",
-            wraplength=560,
-            justify=tk.LEFT,
-        ).pack(anchor=tk.W, pady=(0, 8))
+        preview_card = self._card(scroll_body, None, compact=True)
         ttk.Button(
             preview_card,
             text="座標プレビューを表示",
@@ -839,6 +836,9 @@ class LoginApp(tk.Tk):
         widget = self.user_log_text if channel == CHANNEL_USER else self.detail_log_text
         widget.configure(state=tk.NORMAL)
         widget.insert(tk.END, message + "\n")
+        line_count = int(widget.index("end-1c").split(".")[0])
+        if line_count > 2000:
+            widget.delete("1.0", f"{line_count - 2000 + 1}.0")
         widget.see(tk.END)
         widget.configure(state=tk.DISABLED)
 
@@ -860,7 +860,30 @@ class LoginApp(tk.Tk):
             except FileNotFoundError:
                 self._append_log("設定ファイルが見つかりません。セットアップを実行してください。")
                 return
+        except (ValueError, TypeError) as exc:
+            self._append_log(f"設定ファイルを読み込めません: {exc}")
+            restored = messagebox.askyesno(
+                "設定ファイルのエラー",
+                f"{exc}\n\n正常なバックアップがあれば復元しますか？\n"
+                "「いいえ」では元ファイルを変更せず初期値を表示します。",
+                parent=self,
+            )
+            if restored:
+                try:
+                    if restore_config_backup():
+                        self._apply_config_to_form(load_config())
+                        self._append_log("config.yaml.bak から設定を復元しました")
+                        self._mark_config_saved()
+                        self._refresh_chrome()
+                        return
+                except Exception as restore_exc:
+                    self._append_log(f"バックアップ復元に失敗しました: {restore_exc}")
+            try:
+                self._apply_config_to_form(load_default_config())
+            except Exception:
+                return
         self._mark_config_saved()
+        self._refresh_chrome()
 
     def _apply_config_to_form(self, config: dict) -> None:
         self._config = copy.deepcopy(config)
@@ -915,6 +938,7 @@ class LoginApp(tk.Tk):
 
         self.window_title_var.set(window.get("title_contains", "ARK: Survival Ascended"))
         self.bring_to_front_var.set(bool(window.get("bring_to_front", True)))
+        self.show_click_indicator_var.set(bool(display.get("show_click_indicator", True)))
 
         for field in UI_CLICK_FIELDS:
             entry = ui.get(field.key, {})
@@ -925,8 +949,250 @@ class LoginApp(tk.Tk):
     def _has_setup_templates(self) -> bool:
         return (app_root() / "templates" / "server_list.png").exists()
 
+    def _is_coordinates_only_mode(self) -> bool:
+        label = self.click_mode_var.get()
+        return CLICK_MODE_LABEL_TO_VALUE.get(label, "image") == CLICK_MODE_COORDINATES_ONLY
+
+    def _assess_readiness(self) -> tuple[bool, list[str]]:
+        """開始可能かと、ユーザー向けの準備メッセージ一覧"""
+        messages: list[str] = []
+        ready = True
+
+        if self._has_setup_templates():
+            messages.append("✓ サーバー一覧の画面キャプチャ: 登録済み")
+        else:
+            messages.append("✗ サーバー一覧の画面キャプチャ: 未登録 →「セットアップ」を実行")
+            ready = False
+
+        if self._is_coordinates_only_mode():
+            ui = UiPositions.from_dict(
+                self._collect_ui_coords(),
+                monitor_index=self._get_monitor_index(),
+                capture_settings=self._get_capture_settings(),
+            )
+            if ui.is_configured(coordinates_only=True):
+                messages.append("✓ 座標のみモード: 必須クリック座標は設定済み")
+            else:
+                missing = [
+                    field.label
+                    for field in UI_CLICK_FIELDS
+                    if (field.required or field.key == "accept_network_failure")
+                    and not ui.has_point(field.key)
+                ]
+                messages.append(
+                    "✗ 座標のみモード: 未設定の座標があります →「クリック座標」タブで登録"
+                )
+                if missing:
+                    messages.append(f"   未設定: {', '.join(missing)}")
+                ready = False
+        else:
+            messages.append("✓ クリック方式: 画像優先（同梱ボタン画像を使用）")
+
+        if self._has_unsaved_changes():
+            messages.append("⚠ 設定が未保存です →「設定を保存」を推奨")
+
+        return ready, messages
+
+    def _refresh_readiness(self) -> None:
+        ready, messages = self._assess_readiness()
+        color = COLORS["success"] if ready else COLORS["warning"]
+        self.readiness_label.configure(text="\n".join(messages), fg=color)
+        if hasattr(self, "setup_btn"):
+            if self._has_setup_templates():
+                self.setup_btn.configure(text="セットアップ")
+            else:
+                self.setup_btn.configure(text="セットアップ（要）")
+        if hasattr(self, "start_btn") and not self._running:
+            self.start_btn.configure(state=tk.NORMAL if ready else tk.DISABLED)
+
+    def _update_window_title(self) -> None:
+        title = "ASA_Login"
+        if self._has_unsaved_changes():
+            title += " — 未保存"
+        if self._running:
+            title += " — 実行中"
+        self.title(title)
+
+    def _refresh_chrome(self) -> None:
+        self._refresh_readiness()
+        self._update_window_title()
+
+    def _resolve_manual_path(self) -> Path | None:
+        for candidate in (
+            app_root() / "取扱説明書.html",
+            app_root() / "docs" / "manual.html",
+            bundle_root() / "docs" / "manual.html",
+        ):
+            if candidate.exists():
+                return candidate
+        return None
+
+    def _on_open_manual(self) -> None:
+        manual = self._resolve_manual_path()
+        if manual is None:
+            messagebox.showwarning(
+                "取扱説明書",
+                "取扱説明書が見つかりません。",
+                parent=self,
+            )
+            return
+        webbrowser.open(manual.resolve().as_uri())
+
+    def _copy_diagnostics(self, report: PreflightReport | None = None) -> None:
+        try:
+            config = self._get_form_config()
+            report = report or self._run_preflight_with_progress(config)
+            if report is None:
+                return
+            text = report.to_support_text(config)
+            self.clipboard_clear()
+            self.clipboard_append(text)
+            self.update_idletasks()
+            self._append_log("診断情報をクリップボードへコピーしました")
+            if report is not None:
+                messagebox.showinfo(
+                    "診断情報",
+                    "開始前診断をクリップボードへコピーしました。",
+                    parent=self,
+                )
+        except Exception as exc:
+            messagebox.showerror("診断エラー", f"診断情報を作成できませんでした。\n{exc}", parent=self)
+
+    def _run_preflight_with_progress(self, config: dict) -> PreflightReport | None:
+        cache_key = self._config_snapshot(config)
+        if self._preflight_cache:
+            saved_key, saved_at, saved_report = self._preflight_cache
+            if saved_key == cache_key and time.monotonic() - saved_at < 5.0:
+                return saved_report
+        result_queue: queue.Queue = queue.Queue()
+        dialog = tk.Toplevel(self)
+        dialog.title("開始前診断")
+        dialog.transient(self)
+        dialog.grab_set()
+        dialog.resizable(False, False)
+        ttk.Label(dialog, text="環境と画面を診断中…").pack(padx=30, pady=(20, 8))
+        progress = ttk.Progressbar(dialog, mode="indeterminate", length=260)
+        progress.pack(padx=30, pady=(0, 20))
+        progress.start(12)
+
+        def worker() -> None:
+            try:
+                result_queue.put(("ok", run_preflight(config)))
+            except Exception as exc:
+                result_queue.put(("error", exc))
+
+        def poll() -> None:
+            try:
+                kind, value = result_queue.get_nowait()
+            except queue.Empty:
+                dialog.after(50, poll)
+                return
+            dialog.result = (kind, value)
+            dialog.destroy()
+
+        dialog.result = None
+        threading.Thread(target=worker, daemon=True, name="Preflight").start()
+        dialog.after(50, poll)
+        self.wait_window(dialog)
+        if not dialog.result:
+            return None
+        kind, value = dialog.result
+        if kind == "error":
+            raise value
+        self._preflight_cache = (cache_key, time.monotonic(), value)
+        return value
+
+    def _confirm_environment_preflight(self) -> bool:
+        try:
+            report = self._run_preflight_with_progress(self._get_form_config())
+            if report is None:
+                return False
+        except Exception as exc:
+            messagebox.showerror("開始前診断", f"診断を実行できませんでした。\n{exc}", parent=self)
+            return False
+
+        detail_log.info("\n%s", report.to_text())
+        if not report.can_start:
+            if messagebox.askyesno(
+                "開始できません",
+                report.to_text()
+                + "\n\n診断情報をコピーしますか？\n"
+                "必須キャプチャがない場合は「セットアップ」を実行してください。",
+                parent=self,
+            ):
+                self._copy_diagnostics(report)
+            return False
+        if report.has_warnings:
+            return messagebox.askyesno(
+                "環境差を検出しました",
+                report.to_text()
+                + "\n\n再セットアップを推奨します。\n"
+                "内容を確認したうえで、このまま開始しますか？",
+                parent=self,
+            )
+        self._append_log("開始前診断: 問題は見つかりませんでした")
+        return True
+
+    def _preflight_start(self) -> bool:
+        if not self._has_setup_templates():
+            if messagebox.askyesno(
+                "セットアップが必要です",
+                "サーバー一覧の画面キャプチャが未登録です。\n"
+                "自動ログインを開始する前にセットアップが必要です。\n\n"
+                "今すぐセットアップを開きますか？",
+                parent=self,
+            ):
+                self._on_setup()
+            return False
+
+        if self._is_coordinates_only_mode():
+            ui = UiPositions.from_dict(
+                self._collect_ui_coords(),
+                monitor_index=self._get_monitor_index(),
+                capture_settings=self._get_capture_settings(),
+            )
+            if not ui.is_configured(coordinates_only=True):
+                messagebox.showwarning(
+                    "座標が未設定です",
+                    "座標のみモードでは、① JOIN / ③-A CANCEL / ④ BACK / "
+                    "⑤ JOIN GAME / ⑥ ACCEPT の座標がすべて必要です。\n\n"
+                    "「クリック座標」タブで設定するか、セットアップで登録してください。",
+                    parent=self,
+                )
+                return False
+
+        if self._has_unsaved_changes():
+            answer = messagebox.askyesnocancel(
+                "未保存の設定",
+                "設定が保存されていません。\n\n"
+                "開始前に保存しますか？\n"
+                "（いいえ = 未保存のまま開始、キャンセル = 中止）",
+                parent=self,
+            )
+            if answer is None:
+                return False
+            if answer:
+                try:
+                    self._persist_config()
+                except Exception as exc:
+                    messagebox.showerror("エラー", f"設定の保存に失敗しました:\n{exc}", parent=self)
+                    return False
+
+        return True
+
     def _show_startup_notices(self) -> None:
         if not self._has_setup_templates():
+            if messagebox.askyesno(
+                "初回セットアップ",
+                "サーバー一覧の画面キャプチャがまだ登録されていません。\n\n"
+                "初回は「セットアップ」（最小モード）で ① サーバー一覧だけ登録すれば動作します。\n\n"
+                "今すぐセットアップを開きますか？",
+                parent=self,
+            ):
+                self._on_setup()
+            else:
+                self._append_log("セットアップ未完了です。「セットアップ（要）」から登録してください。")
+            self._refresh_chrome()
             return
         version = int(self._config.get("meta", {}).get("setup_capture_version", 0))
         if version >= SETUP_CAPTURE_VERSION:
@@ -942,6 +1208,7 @@ class LoginApp(tk.Tk):
         self._append_log(
             "以前のセットアップ画像を検出しました。色ずれがある場合は再セットアップを推奨します。"
         )
+        self._refresh_chrome()
 
     def _on_capture_mode_changed(self, *_args) -> None:
         if self._capture_mode_trace_guard:
@@ -1007,6 +1274,7 @@ class LoginApp(tk.Tk):
             self._apply_config_to_form(load_default_config())
             self._persist_config()
             self._append_log("設定を初期値に戻しました")
+            self._refresh_chrome()
             messagebox.showinfo(
                 "完了",
                 "設定を初期値に戻し、config.yaml に保存しました。\n"
@@ -1117,6 +1385,7 @@ class LoginApp(tk.Tk):
             delay_seconds=float(self.delay_var.get()),
             monitor_index=self._get_monitor_index(),
             capture_mode=CAPTURE_MODE_LABEL_TO_VALUE.get(capture_label, "window"),
+            show_click_indicator=bool(self.show_click_indicator_var.get()),
             retry_timing=self._collect_retry_timing(),
             matching_overrides=self._collect_matching(),
             window_overrides=self._collect_window(),
@@ -1127,6 +1396,7 @@ class LoginApp(tk.Tk):
         try:
             self._persist_config()
             self._append_log("設定を config.yaml に保存しました")
+            self._refresh_chrome()
             messagebox.showinfo("保存完了", "設定を保存しました。")
         except Exception as exc:
             messagebox.showerror("エラー", f"設定の保存に失敗しました:\n{exc}")
@@ -1157,6 +1427,7 @@ class LoginApp(tk.Tk):
         def on_complete() -> None:
             self._load_settings()
             self._mark_config_saved()
+            self._refresh_chrome()
             self._append_log("セットアップが完了しました（設定も保存済み）")
 
         run_wizard_gui(
@@ -1174,9 +1445,15 @@ class LoginApp(tk.Tk):
         if self._running:
             return
 
+        if not self._preflight_start():
+            return
+
         dialog = StartReadyDialog(self)
         self.wait_window(dialog)
         if not dialog.confirmed:
+            return
+
+        if not self._confirm_environment_preflight():
             return
 
         capture_settings = self._get_capture_settings()
@@ -1242,7 +1519,7 @@ class LoginApp(tk.Tk):
             user_log.error("エラーが発生しました: %s", exc)
             self._log_queue.put(("error", str(exc)))
         finally:
-            teardown_logging()
+            teardown_logging(close_files=False)
             self._log_queue.put(("done", None))
 
     def _poll_queue(self) -> None:
@@ -1287,6 +1564,9 @@ class LoginApp(tk.Tk):
         except queue.Empty:
             pass
 
+        if not self._running:
+            self._refresh_chrome()
+
         self.after(100, self._poll_queue)
 
 
@@ -1294,7 +1574,7 @@ def run_gui() -> None:
     prepare_runtime()
     try:
         setup_logging(load_config())
-    except FileNotFoundError:
+    except (FileNotFoundError, ValueError, TypeError):
         setup_logging()
 
     app = LoginApp()

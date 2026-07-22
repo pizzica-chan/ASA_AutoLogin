@@ -1,5 +1,5 @@
 @echo off
-setlocal
+setlocal EnableExtensions
 chcp 65001 >nul
 cd /d "%~dp0"
 
@@ -9,13 +9,13 @@ echo ========================================
 echo.
 
 where python >nul 2>&1
-if %errorlevel%==0 (
+if not errorlevel 1 (
     python build.py
     goto :done
 )
 
 where py >nul 2>&1
-if %errorlevel%==0 (
+if not errorlevel 1 (
     py build.py
     goto :done
 )
@@ -26,11 +26,11 @@ pause
 exit /b 1
 
 :done
-if %errorlevel% neq 0 (
+if errorlevel 1 (
     echo.
     echo [エラー] ビルドに失敗しました。
     pause
-    exit /b %errorlevel%
+    exit /b 1
 )
 
 echo.
