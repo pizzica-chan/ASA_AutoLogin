@@ -21,10 +21,8 @@ class UiPositions:
     """①〜⑤ループのクリック位置（パーセント座標）"""
 
     join_server_list: Point
-    cancel_failed: Point
     back_empty_list: Point
     join_game: Point
-    accept_network_failure: Point
     join_mods: Point | None = None
     monitor_index: int = 1
     capture_settings: CaptureSettings | None = None
@@ -57,8 +55,6 @@ class UiPositions:
         return cls(
             join_server_list=point("join_server_list", "join_button", (92.0, 92.0)),
             join_mods=join_mods_point,
-            cancel_failed=point("cancel_failed", default=(55.0, 55.0)),
-            accept_network_failure=point("accept_network_failure", default=(50.0, 60.0)),
             back_empty_list=point("back_empty_list", default=(5.0, 92.0)),
             join_game=point("join_game", default=(29.0, 91.0)),
             monitor_index=monitor_index,
@@ -68,12 +64,9 @@ class UiPositions:
     def is_configured(self, *, coordinates_only: bool = False) -> bool:
         required: tuple[Point, ...] = (
             self.join_server_list,
-            self.cancel_failed,
             self.back_empty_list,
             self.join_game,
         )
-        if coordinates_only:
-            required = required + (self.accept_network_failure,)
         return all(p.x_percent > 0 and p.y_percent > 0 for p in required)
 
     def has_point(self, key: str) -> bool:
@@ -85,10 +78,8 @@ class UiPositions:
     def iter_click_points(self) -> list[tuple[str, Point]]:
         points: list[tuple[str, Point]] = [
             ("join_server_list", self.join_server_list),
-            ("cancel_failed", self.cancel_failed),
             ("back_empty_list", self.back_empty_list),
             ("join_game", self.join_game),
-            ("accept_network_failure", self.accept_network_failure),
         ]
         if self.join_mods is not None:
             points.insert(1, ("join_mods", self.join_mods))
@@ -119,14 +110,6 @@ class UiPositions:
             "join_server_list": {
                 "x_percent": self.join_server_list.x_percent,
                 "y_percent": self.join_server_list.y_percent,
-            },
-            "cancel_failed": {
-                "x_percent": self.cancel_failed.x_percent,
-                "y_percent": self.cancel_failed.y_percent,
-            },
-            "accept_network_failure": {
-                "x_percent": self.accept_network_failure.x_percent,
-                "y_percent": self.accept_network_failure.y_percent,
             },
             "back_empty_list": {
                 "x_percent": self.back_empty_list.x_percent,

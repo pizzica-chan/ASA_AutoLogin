@@ -165,12 +165,10 @@ SETUP_STEPS: tuple[SetupStep, ...] = (
         prepare_lines=(
             "ログイン試行後、サーバー一覧の上に CONNECTION FAILED ダイアログが表示されます。",
             "本文例: This Server is full. Please try again later...",
-            "ダイアログ右側の CANCEL ボタンが見える状態にしてください（ACCEPT は使いません）。",
+            "ダイアログが見える状態にしてください（確定は Enter キーで行います）。",
             "背景に MULTIPLAYER SERVERS: 0 の空一覧が見えていても問題ありません。",
         ),
         capture_hint="CONNECTION FAILED ダイアログ付きの画面をキャプチャします。",
-        click_key="cancel_failed",
-        click_hint="CANCEL ボタンの位置をクリックして座標登録",
     ),
     SetupStep(
         name="network_failure",
@@ -181,11 +179,9 @@ SETUP_STEPS: tuple[SetupStep, ...] = (
             "② の JOIN 後、ログインムービーのあとタイトル画面に戻り、",
             "NETWORK FAILURE MESSAGE ダイアログが表示されます。",
             "本文例: Server full.",
-            "ダイアログ内の ACCEPT ボタンが見える状態にしてください。",
+            "ダイアログが見える状態にしてください（確定は Enter キーで行います）。",
         ),
         capture_hint="エラーダイアログ付きのタイトル画面をキャプチャします。",
-        click_key="accept_network_failure",
-        click_hint="ACCEPT ボタンの位置をクリックして座標登録",
     ),
     SetupStep(
         name="title_screen",
@@ -193,7 +189,7 @@ SETUP_STEPS: tuple[SetupStep, ...] = (
         required=False,
         sample_image=None,
         prepare_lines=(
-            "⑥ で ACCEPT を押した直後のタイトル画面です。",
+            "⑥ で Enter 確定後のタイトル画面です。",
             "エラーダイアログが消えた状態でキャプチャします。",
         ),
         capture_hint="PRESS TO START が見える画面をキャプチャします。",

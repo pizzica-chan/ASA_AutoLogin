@@ -26,9 +26,9 @@ ARK: Survival Ascended のサーバー参加を自動化する際の画面遷移
 │  ③ ログイン試行中（待機）                                │
 │     ├─ 成功（ゲーム内画面を検出）→ 完了                   │
 │     ├─ ③-A CONNECTION FAILED（サーバー一覧上）          │
-│     │      → CANCEL → ④ → ⑤ → ①                        │
+│     │      → Enter → ④ → ⑤ → ①                        │
 │     └─ ⑥ ログインムービー後、タイトル画面で失敗            │
-│            → ACCEPT → ⑦ Space → ⑤ JOIN GAME → ①          │
+│            → Enter → ⑦ Space → ⑤ JOIN GAME → ①          │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -83,9 +83,9 @@ ARK: Survival Ascended のサーバー参加を自動化する際の画面遷移
 |------|------|
 | **画面** | サーバー一覧の上に「CONNECTION FAILED」ダイアログ |
 | **本文例** | `This Server is full. Please try again later...` |
-| **操作** | **CANCEL** をクリック（ACCEPT は使わない） |
+| **操作** | **Enter** キーで CANCEL 相当（ACCEPT は使わない） |
 | **テンプレート** | `templates/connection_failed.png` |
-| **クリック位置** | `ui.cancel_failed` |
+| **検出補助** | `buttons/cancel_failed.png`（画面未登録時） |
 | **復帰** | ④ BACK → ⑤ JOIN GAME → ① |
 
 #### ⑥ 失敗（NETWORK FAILURE・タイトル画面）
@@ -95,21 +95,21 @@ ARK: Survival Ascended のサーバー参加を自動化する際の画面遷移
 | **経路** | ② の JOIN 後、ログイン成功時のような**ムービー**（オレンジ背景の ARK ロゴ等）が流れたあと、**タイトル画面**に戻る |
 | **画面** | タイトル画面上の「NETWORK FAILURE MESSAGE」ダイアログ |
 | **本文例** | `Server full.` |
-| **操作** | **ACCEPT** をクリック |
+| **操作** | **Enter** キーで ACCEPT 相当 |
 | **テンプレート** | `templates/network_failure.png` |
-| **クリック位置** | `ui.accept_network_failure` |
+| **検出補助** | `buttons/accept_network_failure.png`（画面未登録時） |
 | **補助テンプレート** | `templates/login_movie.png`（ムービー再生中の待機判定・任意） |
-| **復帰** | ACCEPT → **⑦** → Space → **⑤** JOIN GAME → ① |
+| **復帰** | Enter → **⑦** → Space → **⑤** JOIN GAME → ① |
 
 **補足:** ③-A と ⑥ は排他的です。どちらか一方が発生します。
 
 ---
 
-### ⑦ タイトル画面（ACCEPT 後）
+### ⑦ タイトル画面（⑥ Enter 確定後）
 
 | 項目 | 内容 |
 |------|------|
-| **画面** | ⑥ で ACCEPT を押した後のタイトル画面（エラーダイアログなし） |
+| **画面** | ⑥ で Enter 確定した後のタイトル画面（エラーダイアログなし） |
 | **表示例** | `PRESS [Enter] TO START` / `JOIN LAST SESSION` 等 |
 | **操作** | **Space** キーを押す（Enter でも可だが、ツールは Space を送信） |
 | **テンプレート** | `templates/title_screen.png`（任意・⑦ 検出用） |
@@ -130,7 +130,7 @@ ARK: Survival Ascended のサーバー参加を自動化する際の画面遷移
 | **テンプレート** | `templates/server_list_empty.png`（任意） |
 | **クリック位置** | `ui.back_empty_list` |
 
-**補足:** ③ で CANCEL を押した直後に遷移することが多いです。`server_list_empty.png` 未登録時は `back_empty_list` ボタン PNG で検出可能（座標のみモード含む）。
+**補足:** ③-A で Enter 確定した直後に遷移することが多いです。`server_list_empty.png` 未登録時は `back_empty_list` ボタン PNG で検出可能（座標のみモード含む）。
 
 ---
 
@@ -153,8 +153,8 @@ ARK: Survival Ascended のサーバー参加を自動化する際の画面遷移
 
 1. **① → ② → ③** を1回の接続試行とする
 2. ③ で失敗した場合:
-   - **③-A** … CANCEL → ④ BACK → ⑤ JOIN GAME で ① に戻る
-   - **⑥** … ACCEPT → ⑦ Space → ⑤ JOIN GAME で ① に戻る
+   - **③-A** … Enter → ④ BACK → ⑤ JOIN GAME で ① に戻る
+   - **⑥** … Enter → ⑦ Space → ⑤ JOIN GAME で ① に戻る
 3. ① から再度ループを実行
 4. `retry.max_attempts` が `0` の場合は成功するまで無制限に繰り返す
 5. 失敗のたびに `retry.delay_seconds` 秒待機してから次の試行
@@ -165,6 +165,7 @@ ARK: Survival Ascended のサーバー参加を自動化する際の画面遷移
 |------|------|
 | **画面状態の判定**（①〜⑦・成功） | 画面全体キャプチャと `templates/*.png` の類似度比較 |
 | **ボタンクリック** | `templates/buttons/*.png`（exe 横・差し替え可）を画面上から検索してクリック |
+| **③-A / ⑥ の確定** | Enter キー（ボタン PNG はダイアログ検出に使用） |
 | **フォールバック** | ボタン画像が見つからない場合、`config.yaml` の `ui` 座標でクリック |
 
 - 画面判定の閾値: `matching.screen_threshold`（デフォルト `0.75`）
@@ -175,10 +176,10 @@ ARK: Survival Ascended のサーバー参加を自動化する際の画面遷移
 
 | 項目 | 動作 |
 |------|------|
-| クリック | すべて `ui` の％座標 |
+| クリック | ① / ② / ④ / ⑤ の `ui` ％座標（③-A / ⑥ は Enter 確定のため座標不要） |
 | 到達判定 | 画面テンプレート ＋ ボタン PNG（クリックには使わない） |
 | ② MODS | `mods_detect_mode: hybrid` 推奨（画面中央領域 ＋ `join_mods` ボタン） |
-| ③-A / ⑥ | 画面未登録時は `cancel_failed` / `accept_network_failure` ボタン PNG |
+| ③-A / ⑥ | Enter で確定。画面未登録時は `cancel_failed` / `accept_network_failure` ボタン PNG でダイアログ検出 |
 | ④ / ⑤ | 画面未登録時は `back_empty_list` / `join_game`（2 PNG 試行）ボタン PNG |
 
 ## セットアップとの対応
@@ -188,21 +189,21 @@ ARK: Survival Ascended のサーバー参加を自動化する際の画面遷移
 | 項目 | 内容 |
 |------|------|
 | **ユーザーが撮る画面** | ① サーバー一覧のみ |
-| **同梱デフォルト** | CANCEL / BACK / MODS JOIN などのボタン画像（初回に `templates/buttons/` へコピー） |
+| **同梱デフォルト** | BACK / MODS JOIN などのボタン画像（初回に `templates/buttons/` へコピー）。③-A / ⑥ 用 PNG は**ダイアログ検出**用 |
 | **エラー画面キャプチャ** | **不要**（ボタン出現でエラーを検出） |
 
 ### フルセットアップ
 
 各画面を個別にキャプチャして同梱デフォルトを上書きできます。
 
-| ステップ | キャプチャファイル | ボタン画像 | サンプル |
-|---------|-------------------|-----------|---------|
+| ステップ | キャプチャファイル | 検出用ボタン PNG | サンプル |
+|---------|-------------------|-----------------|---------|
 | ① | `server_list.png` | `buttons/join_server_list.png` | `01_server_list.png` |
 | ② | `required_mods.png` | `buttons/join_mods.png` | `02_required_mods.png` |
-| ③-A | `connection_failed.png` | `buttons/cancel_failed.png` | `03a_connection_failed.png` |
+| ③-A | `connection_failed.png` | `buttons/cancel_failed.png`（Enter で確定・座標登録なし） | `03a_connection_failed.png` |
 | ④ | `server_list_empty.png` | `buttons/back_empty_list.png` | — |
 | ⑤ | `main_menu.png` | `buttons/join_game.png`（④枚） / `join_game_center.png`（⑤枚） | `04_main_menu_4tiles.png` / `04_main_menu.png` |
-| ⑥ | `network_failure.png` | `buttons/accept_network_failure.png` | `05_network_failure.png` |
+| ⑥ | `network_failure.png` | `buttons/accept_network_failure.png`（Enter で確定・座標登録なし） | `05_network_failure.png` |
 
 GUI を起動して **「セットアップ」** ボタンを押す（`python gui.py`）。コマンドラインでの操作は不要です。
 

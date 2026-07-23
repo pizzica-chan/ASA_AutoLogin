@@ -32,6 +32,19 @@ class ConfigNormalizationTests(unittest.TestCase):
         self.assertEqual(normalized["meta"]["config_schema_version"], CONFIG_SCHEMA_VERSION)
         self.assertEqual(config["display"]["capture_mode"], "typo")
 
+    def test_obsolete_ui_keys_are_removed(self) -> None:
+        config = {
+            "ui": {
+                "join_server_list": {"x_percent": 92.0, "y_percent": 92.0},
+                "cancel_failed": {"x_percent": 55.0, "y_percent": 55.0},
+                "accept_network_failure": {"x_percent": 50.0, "y_percent": 60.0},
+            },
+        }
+        normalized = normalize_config(config)
+        self.assertIn("join_server_list", normalized["ui"])
+        self.assertNotIn("cancel_failed", normalized["ui"])
+        self.assertNotIn("accept_network_failure", normalized["ui"])
+
     def test_broken_yaml_reports_error_without_overwriting_file(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "config.yaml"

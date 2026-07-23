@@ -529,8 +529,8 @@
         <strong>ツールが行うこと</strong>
         <ul>
           <li>サーバー一覧の JOIN →（必要なら）MODS の JOIN → ログイン待ち</li>
-          <li>満員などで失敗したときの CANCEL / BACK / JOIN GAME による復帰と再試行</li>
-          <li>タイトル画面での NETWORK FAILURE 処理（ACCEPT → Space → JOIN GAME）</li>
+          <li>満員などで失敗したときの Enter 確定・BACK / JOIN GAME による復帰と再試行</li>
+          <li>タイトル画面での NETWORK FAILURE 処理（Enter → Space → JOIN GAME）</li>
         </ul>
       </div>
 
@@ -583,7 +583,7 @@ python gui.py</pre>
       <div class="card success">
         <strong>最小セットアップのポイント</strong><br>
         ① サーバー一覧のキャプチャだけで、非 MODS サーバーなら基本的に動作します。<br>
-        <strong>画像優先モード</strong>では、CANCEL / BACK 等は同梱ボタン PNG で検出するため、エラー画面をわざと起こす必要はありません。<br>
+        <strong>画像優先モード</strong>では、エラーダイアログは同梱ボタン PNG や画面テンプレートで検出し、③-A / ⑥ は <strong>Enter キー</strong>で確定します。エラー画面をわざと起こす必要はありません。<br>
         <strong>MODS サーバー</strong>では、② のキャプチャまたは <code>join_mods</code> 座標の登録を推奨します。
       </div>
     </section>
@@ -598,8 +598,8 @@ python gui.py</pre>
         ↓
 ③ ログイン試行（待機）
    ├─ 成功（ゲーム内画面を検出）→ 完了
-   ├─ ③-A CONNECTION FAILED → CANCEL → ④ BACK → ⑤ JOIN GAME → ①
-   └─ ⑥ NETWORK FAILURE → ACCEPT → ⑦ Space → ⑤ JOIN GAME → ①</pre>
+   ├─ ③-A CONNECTION FAILED → Enter → ④ BACK → ⑤ JOIN GAME → ①
+   └─ ⑥ NETWORK FAILURE → Enter → ⑦ Space → ⑤ JOIN GAME → ①</pre>
 
       <table>
         <thead>
@@ -632,7 +632,7 @@ python gui.py</pre>
           <tr>
             <td>③-A</td>
             <td>CONNECTION FAILED</td>
-            <td><strong>CANCEL</strong>（ACCEPT は使わない）</td>
+            <td><strong>Enter</strong> キー（CANCEL 相当・ACCEPT は使わない）</td>
             <td>サーバー一覧上のダイアログ</td>
           </tr>
           <tr>
@@ -650,7 +650,7 @@ python gui.py</pre>
           <tr>
             <td>⑥</td>
             <td>NETWORK FAILURE</td>
-            <td><strong>ACCEPT</strong></td>
+            <td><strong>Enter</strong> キー（ACCEPT 相当）</td>
             <td>タイトル画面のダイアログ</td>
           </tr>
           <tr>
@@ -673,7 +673,7 @@ python gui.py</pre>
       </figure>
 
       <h3>各操作で使うボタン画像</h3>
-      <p>クリック対象は <code>templates/buttons/</code> 内の PNG を画面上から検索して押します（座標フォールバックあり）。</p>
+      <p>クリック対象は <code>templates/buttons/</code> 内の PNG を画面上から検索して押します（座標フォールバックあり）。③-A / ⑥ は Enter キーで確定し、ボタン PNG はダイアログ検出に使います。</p>
 
       <div class="btn-grid">
         <figure class="btn-card">
@@ -691,10 +691,10 @@ python gui.py</pre>
           </figcaption>
         </figure>
         <figure class="btn-card">
-          <img src="../templates/buttons/cancel_failed.png" alt="③-A CANCEL">
+          <img src="../templates/buttons/cancel_failed.png" alt="③-A ダイアログ検出用">
           <figcaption>
             <strong>③-A cancel_failed.png</strong>
-            <span>CONNECTION FAILED の CANCEL</span>
+            <span>CONNECTION FAILED 検出用（Enter で確定）</span>
           </figcaption>
         </figure>
         <figure class="btn-card">
@@ -719,10 +719,10 @@ python gui.py</pre>
           </figcaption>
         </figure>
         <figure class="btn-card">
-          <img src="../templates/buttons/accept_network_failure.png" alt="⑥ ACCEPT">
+          <img src="../templates/buttons/accept_network_failure.png" alt="⑥ ダイアログ検出用">
           <figcaption>
             <strong>⑥ accept_network_failure.png</strong>
-            <span>NETWORK FAILURE の ACCEPT</span>
+            <span>NETWORK FAILURE 検出用（Enter で確定）</span>
           </figcaption>
         </figure>
       </div>
@@ -741,7 +741,7 @@ python gui.py</pre>
       <h3>最小モード（推奨）</h3>
       <div class="card success">
         <strong>① サーバー一覧だけ</strong>登録すれば、非 MODS サーバーでは動作します。<br>
-        画像優先モードでは、復帰用ボタン（CANCEL / BACK 等）は同梱 PNG で検出します。
+        画像優先モードでは、復帰用の BACK 等は同梱 PNG で検出します。③-A / ⑥ のダイアログも PNG または画面テンプレートで検出し、Enter で確定します。
       </div>
 
       <h3>個別モード</h3>
@@ -765,7 +765,7 @@ python gui.py</pre>
           <tr>
             <th>ステップ</th>
             <th>保存ファイル</th>
-            <th>クリック登録</th>
+            <th>クリック登録 / 確定</th>
           </tr>
         </thead>
         <tbody>
@@ -782,7 +782,7 @@ python gui.py</pre>
           <tr>
             <td>③-A CONNECTION FAILED</td>
             <td><code>templates/connection_failed.png</code></td>
-            <td>CANCEL</td>
+            <td>—（Enter キー）</td>
           </tr>
           <tr>
             <td>④ 空のサーバー一覧</td>
@@ -797,7 +797,7 @@ python gui.py</pre>
           <tr>
             <td>⑥ NETWORK FAILURE</td>
             <td><code>templates/network_failure.png</code></td>
-            <td>ACCEPT</td>
+            <td>—（Enter キー）</td>
           </tr>
           <tr>
             <td>⑦ タイトル画面（任意）</td>
@@ -884,14 +884,14 @@ python gui.py</pre>
           <tr><td>クリック前 / 後の待ち</td><td>ボタン検出からクリックまで、およびクリック後の安定待ち</td></tr>
           <tr><td>② MODS 画面の確認時間</td><td>① JOIN 後、MODS が出るかどうか見る時間</td></tr>
           <tr><td>③ ログイン結果の待ち</td><td>成功・失敗・動画のいずれかが出るまでの上限</td></tr>
-          <tr><td>失敗後の画面復帰待ち</td><td>CANCEL / BACK / ACCEPT 後の復帰待ち上限</td></tr>
+          <tr><td>失敗後の画面復帰待ち</td><td>Enter 確定・BACK 後の復帰待ち上限</td></tr>
         </tbody>
       </table>
 
       <h3><span class="badge">画像認識</span> 一致度の調整</h3>
       <ul>
         <li><strong>画面判定の一致度</strong> … サーバー一覧やメインメニューなど全体画面の判定</li>
-        <li><strong>ボタン判定の一致度</strong> … JOIN / CANCEL などボタン画像の判定</li>
+        <li><strong>ボタン判定の一致度</strong> … JOIN / BACK などボタン画像の判定（③-A / ⑥ 用 PNG はダイアログ検出）</li>
         <li><strong>② MODS 画面の一致度</strong> … MODS の出現判定（低めの値がデフォルト）</li>
         <li><strong>② MODS 画面の検出</strong> … 検出方式（ハイブリッド推奨）と画面比較範囲（中央モーダル推奨）</li>
         <li><strong>ARK ウィンドウのタイトル</strong> … 通常は変更不要</li>
@@ -902,7 +902,7 @@ python gui.py</pre>
       <p>クリック表示は入力を遮りません。排他フルスクリーンではゲームの背面に隠れることがあるため、見えない場合はボーダーレス表示を試すか、詳細ログの「クリック表示」を確認してください。</p>
 
       <h3><span class="badge">クリック座標</span> ％座標とクリック方式</h3>
-      <p>左上 (0, 0)、右下 (100, 100) のパーセント座標で各ボタンの位置を指定します。セットアップで登録した値もここに反映されます。</p>
+      <p>左上 (0, 0)、右下 (100, 100) のパーセント座標で各ボタンの位置を指定します。対象は ① JOIN / ② MODS JOIN / ④ BACK / ⑤ JOIN GAME です（③-A / ⑥ は Enter 確定のため不要）。セットアップで登録した値もここに反映されます。</p>
       <p>各行の <strong>「画面で設定」</strong> から、モニター上をクリックして座標を登録できます（キャプチャ範囲の基準に従います）。</p>
 
       <table>
@@ -924,7 +924,7 @@ python gui.py</pre>
           </tr>
           <tr>
             <td>座標のみ</td>
-            <td>クリックはすべて座標。到達判定は画面テンプレート＋ボタン PNG（② は <code>mods_detect_mode: hybrid</code> 推奨）。③-A / ④ / ⑤ / ⑥ も画面未登録時はボタン PNG で検出可（⑤ は <code>join_game</code> / <code>join_game_center</code> を両方試行）</td>
+            <td>クリックは ① / ② / ④ / ⑤ の座標。③-A / ⑥ は Enter 確定。到達判定は画面テンプレート＋ボタン PNG（② は <code>mods_detect_mode: hybrid</code> 推奨）</td>
           </tr>
         </tbody>
       </table>
@@ -958,11 +958,11 @@ python gui.py</pre>
         <ul>
           <li><code>join_server_list.png</code> … ① サーバー一覧 JOIN</li>
           <li><code>join_mods.png</code> … ② MODS JOIN</li>
-          <li><code>cancel_failed.png</code> … ③-A CANCEL</li>
+          <li><code>cancel_failed.png</code> … ③-A ダイアログ検出（Enter で確定）</li>
           <li><code>back_empty_list.png</code> … ④ BACK</li>
           <li><code>join_game.png</code> … ⑤ JOIN GAME（④枚タイル）</li>
           <li><code>join_game_center.png</code> … ⑤ JOIN GAME（⑤枚タイル）</li>
-          <li><code>accept_network_failure.png</code> … ⑥ ACCEPT</li>
+          <li><code>accept_network_failure.png</code> … ⑥ ダイアログ検出（Enter で確定）</li>
         </ul>
       </div>
 
@@ -1040,7 +1040,8 @@ python gui.py</pre>
       <div class="card warn">
         <strong>座標のみモードで開始に必要な座標</strong>
         <ul>
-          <li>必須: ① JOIN / ③-A CANCEL / ④ BACK / ⑤ JOIN GAME / ⑥ ACCEPT</li>
+          <li>必須: ① JOIN / ④ BACK / ⑤ JOIN GAME</li>
+          <li>③-A / ⑥: Enter キーで確定（座標不要）。検出は画面テンプレートまたは <code>templates/buttons/</code> の PNG</li>
           <li>MODS サーバー: ② MODS JOIN 座標も登録（未登録だと② をスキップ）</li>
           <li>画面キャプチャ（<code>templates/*.png</code>）は ① 必須。他は未登録でもボタン PNG 検出で補える場合あり</li>
         </ul>
@@ -1212,11 +1213,11 @@ python gui.py</pre>
             <td>③-A→④→⑤</td>
             <td>
               <span class="priority">1</span>失敗後の画面復帰待ちを 60 秒程度に<br>
-              <span class="priority">2</span>CANCEL / BACK / JOIN GAME 座標を「画面で設定」<br>
-              <span class="priority">3</span>座標のみ: <code>cancel_failed.png</code> 等のボタン PNG 差し替え<br>
+              <span class="priority">2</span>BACK / JOIN GAME 座標を「画面で設定」<br>
+              <span class="priority">3</span>座標のみ: <code>cancel_failed.png</code> 等のボタン PNG 差し替え（検出用）<br>
               <span class="priority">4</span>画面テンプレートをフルセットアップで登録（精度向上）
             </td>
-            <td>待ち時間 / クリック座標 / templates/buttons / セットアップ</td>
+            <td>待ち時間 / templates/buttons / セットアップ</td>
           </tr>
           <tr>
             <td>BACK や JOIN GAME が押せない</td>
@@ -1232,12 +1233,11 @@ python gui.py</pre>
             <td>NETWORK FAILURE から戻れない</td>
             <td>⑥→⑦→⑤</td>
             <td>
-              <span class="priority">1</span>ACCEPT 座標を登録（座標のみでは必須）<br>
-              <span class="priority">2</span><code>accept_network_failure.png</code> 差し替え<br>
-              <span class="priority">3</span><code>network_failure.png</code> をセットアップ登録<br>
-              <span class="priority">4</span>失敗後の画面復帰待ちを延長
+              <span class="priority">1</span><code>network_failure.png</code> をセットアップ登録<br>
+              <span class="priority">2</span><code>accept_network_failure.png</code> 差し替え（検出用）<br>
+              <span class="priority">3</span>失敗後の画面復帰待ちを延長
             </td>
-            <td>クリック座標 / templates/buttons / セットアップ / 待ち時間</td>
+            <td>templates/buttons / セットアップ / 待ち時間</td>
           </tr>
           <tr>
             <td>ARK ウィンドウが見つかりません</td>
@@ -1362,7 +1362,7 @@ python gui.py</pre>
           <tbody>
             <tr>
               <td>CONNECTION FAILED 後に戻れない</td>
-              <td>失敗後の画面復帰待ち 60 秒程度 → CANCEL 座標登録 → <code>cancel_failed.png</code> 差し替え → <code>connection_failed.png</code> 登録</td>
+              <td>失敗後の画面復帰待ち 60 秒程度 → <code>connection_failed.png</code> 登録 → <code>cancel_failed.png</code> 差し替え（検出用）</td>
             </tr>
             <tr>
               <td>BACK が押せない</td>
@@ -1374,7 +1374,7 @@ python gui.py</pre>
             </tr>
             <tr>
               <td>NETWORK FAILURE 復帰失敗</td>
-              <td>ACCEPT 座標必須（座標のみ）→ <code>accept_network_failure.png</code> 差し替え → <code>network_failure.png</code> 登録 → 復帰待ち延長</td>
+              <td><code>network_failure.png</code> 登録 → <code>accept_network_failure.png</code> 差し替え（検出用）→ 復帰待ち延長</td>
             </tr>
             <tr>
               <td>復帰は進むが途中で止まる</td>

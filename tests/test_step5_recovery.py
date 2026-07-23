@@ -19,10 +19,8 @@ class Step5RecoveryTests(unittest.TestCase):
             {
                 "join_server_list": {"x_percent": 90.62, "y_percent": 87.67},
                 "join_mods": {"x_percent": 27.38, "y_percent": 86.89},
-                "cancel_failed": {"x_percent": 60.75, "y_percent": 69.33},
                 "back_empty_list": {"x_percent": 8.5, "y_percent": 81.89},
                 "join_game": {"x_percent": 49.81, "y_percent": 53.11},
-                "accept_network_failure": {"x_percent": 49.12, "y_percent": 68.0},
             },
         )
         return LoginAutomator(

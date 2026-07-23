@@ -15,12 +15,7 @@ from src.vision import MatchResult
 
 class RecoveryDetectionTests(unittest.TestCase):
     def _automator(self) -> LoginAutomator:
-        ui = UiPositions.from_dict(
-            {
-                "cancel_failed": {"x_percent": 60.0, "y_percent": 69.0},
-                "accept_network_failure": {"x_percent": 49.0, "y_percent": 68.0},
-            },
-        )
+        ui = UiPositions.from_dict({})
         return LoginAutomator(
             vision=MagicMock(),
             templates=TemplateConfig(click_mode="coordinates_only"),

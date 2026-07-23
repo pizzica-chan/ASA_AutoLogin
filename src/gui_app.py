@@ -976,8 +976,7 @@ class LoginApp(tk.Tk):
                 missing = [
                     field.label
                     for field in UI_CLICK_FIELDS
-                    if (field.required or field.key == "accept_network_failure")
-                    and not ui.has_point(field.key)
+                    if field.required and not ui.has_point(field.key)
                 ]
                 messages.append(
                     "✗ 座標のみモード: 未設定の座標があります →「クリック座標」タブで登録"
@@ -1154,8 +1153,8 @@ class LoginApp(tk.Tk):
             if not ui.is_configured(coordinates_only=True):
                 messagebox.showwarning(
                     "座標が未設定です",
-                    "座標のみモードでは、① JOIN / ③-A CANCEL / ④ BACK / "
-                    "⑤ JOIN GAME / ⑥ ACCEPT の座標がすべて必要です。\n\n"
+                    "座標のみモードでは、① JOIN / ④ BACK / ⑤ JOIN GAME の座標が必要です。\n"
+                    "（③-A / ⑥ は Enter キーで確定するため座標は不要です。）\n\n"
                     "「クリック座標」タブで設定するか、セットアップで登録してください。",
                     parent=self,
                 )

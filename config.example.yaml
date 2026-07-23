@@ -48,7 +48,8 @@ templates:
   main_menu: templates/main_menu.png
   in_game: templates/in_game.png
 
-# 座標フォールバック（ボタン画像は templates/buttons/ の PNG を使用・差し替え可）
+# 座標フォールバック（① / ② / ④ / ⑤。③-A / ⑥ は Enter 確定のため ui 座標不要）
+# ボタン画像は templates/buttons/ の PNG を使用・差し替え可（③-A / ⑥ 用はダイアログ検出用）
 ui:
   join_server_list:
     x_percent: 92.0
@@ -56,12 +57,6 @@ ui:
   join_mods:
     x_percent: 42.0
     y_percent: 92.0
-  cancel_failed:
-    x_percent: 55.0
-    y_percent: 55.0
-  accept_network_failure:
-    x_percent: 50.0
-    y_percent: 60.0
   back_empty_list:
     x_percent: 5.0
     y_percent: 92.0

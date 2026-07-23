@@ -22,27 +22,25 @@ class CoordinatesOnlyRecoveryTests(unittest.TestCase):
         return automator
 
     @patch.object(LoginAutomator, "_is_server_list_ready", return_value=(True, 0.9))
-    @patch.object(LoginAutomator, "_click_target_when_ready", return_value=True)
+    @patch.object(LoginAutomator, "_confirm_dialog_with_enter", return_value=True)
     @patch.object(LoginAutomator, "_wait_after_click")
     @patch.object(LoginAutomator, "_return_to_server_list_via_main_menu", return_value=True)
     @patch.object(LoginAutomator, "_has_connection_failed_dialog", return_value=True)
-    @patch.object(LoginAutomator, "_click_target", return_value=True)
-    @patch.object(LoginAutomator, "_wait_for_button", return_value=True)
     def test_connection_failed_recovery_accepts_direct_return_to_list(
         self,
-        mock_wait_button,
-        _mock_click,
         _mock_has_failed,
         _mock_return,
         _mock_after,
-        mock_when_ready,
+        mock_confirm_enter,
         _mock_ready,
     ) -> None:
         automator = self._automator()
         self.assertTrue(automator._recover_after_connection_failed())
-        calls = [c.args[0] for c in mock_when_ready.call_args_list]
-        self.assertEqual(calls, ["cancel_failed"])
-        mock_wait_button.assert_not_called()
+        mock_confirm_enter.assert_called_once_with(
+            "connection_failed",
+            "cancel_failed",
+            "③-A CANCEL",
+        )
 
     @patch.object(LoginAutomator, "_wait_for_step1_ready", return_value=True)
     @patch.object(LoginAutomator, "_wait_after_click")

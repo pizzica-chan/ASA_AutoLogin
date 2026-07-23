@@ -10,8 +10,8 @@ ARK: Survival Ascended のサーバー参加（ログイン）を自動化する
 ```
 ① サーバー一覧 → JOIN → ② MODS（任意）→ JOIN → ③ ログイン試行
     ├─ 成功 → 完了
-    ├─ ③-A → CANCEL → ④ BACK → ⑤ JOIN GAME → ①（リトライ）
-    └─ ⑥ → ACCEPT → ⑦ Space → ⑤ JOIN GAME → ①（リトライ）
+    ├─ ③-A → Enter → ④ BACK → ⑤ JOIN GAME → ①（リトライ）
+    └─ ⑥ → Enter → ⑦ Space → ⑤ JOIN GAME → ①（リトライ）
 ```
 
 ## 配布版（Python 不要）
@@ -73,7 +73,8 @@ GUI の **「セットアップ」** ボタンから次のいずれかを選べ�
 
 **① サーバー一覧だけ**キャプチャすれば動きます。
 
-- エラー時の CANCEL / BACK / MODS JOIN は **同梱ボタン PNG** で画面到達を検出（クリックは方式に応じて画像 or 座標）
+- エラー時の BACK / MODS JOIN は **同梱ボタン PNG** で画面到達を検出（クリックは方式に応じて画像 or 座標）
+- ③-A / ⑥ の CANCEL / ACCEPT 相当は **Enter キー**で確定（ボタン PNG はダイアログ検出用）
 - **エラー画面をわざと起こしてキャプチャする必要はありません**（座標のみモードでもボタン PNG で検出可）
 
 ### フルモード
@@ -98,7 +99,7 @@ GUI の **「セットアップ」** ボタンから次のいずれかを選べ�
 | 画面状態の判定 | 画面全体の類似度比較（①は自分のキャプチャ推奨、未登録時は同梱フォールバック） |
 | ボタンクリック | `templates/buttons/` の PNG を画面上から検索（② MODS JOIN 含む） |
 | フォールバック | 見つからない場合のみセットアップで登録した座標を使用 |
-| 座標のみモード | `matching.click_mode: coordinates_only` — クリックはすべて `ui` の％座標。到達判定は画面テンプレート＋ボタン PNG（② MODS は `mods_detect_mode: hybrid` 推奨、③-A / ④ / ⑤ / ⑥ も画面未登録時はボタン PNG で検出可） |
+| 座標のみモード | `matching.click_mode: coordinates_only` — クリックは ① / ② / ④ / ⑤ の `ui` 座標。③-A / ⑥ は Enter 確定。到達判定は画面テンプレート＋ボタン PNG |
 
 ## サブモニター運用
 

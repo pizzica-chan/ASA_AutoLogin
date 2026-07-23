@@ -44,11 +44,12 @@ class UiClickField:
 UI_CLICK_FIELDS: tuple[UiClickField, ...] = (
     UiClickField("join_server_list", "① サーバー一覧 JOIN", 92.0, 92.0),
     UiClickField("join_mods", "② MODS JOIN", 42.0, 92.0, required=False),
-    UiClickField("cancel_failed", "③-A CANCEL", 55.0, 55.0),
     UiClickField("back_empty_list", "④ BACK", 5.0, 92.0),
     UiClickField("join_game", "⑤ JOIN GAME", 29.0, 91.0),
-    UiClickField("accept_network_failure", "⑥ ACCEPT", 50.0, 60.0),
 )
+
+# Enter キー確定へ移行したため ui 座標は不要（読み込み時に除去）
+OBSOLETE_UI_KEYS = ("cancel_failed", "accept_network_failure")
 
 STATE_LABELS = {
     LoginState.IDLE: "待機中",
@@ -144,7 +145,7 @@ RETRY_TIMING_FIELDS: tuple[SettingField, ...] = (
     SettingField(
         "recovery_timeout",
         "失敗後の画面復帰待ち（上限）",
-        "CANCEL・BACK・ACCEPT 後、次の操作可能画面が出るまでの最大秒数",
+        "Enter 確定・BACK 後、次の操作可能画面が出るまでの最大秒数",
         45.0, 5.0, 300.0, 5.0, "失敗時の復帰（④〜⑦）",
     ),
 )
@@ -159,7 +160,7 @@ MATCHING_FIELDS: tuple[SettingField, ...] = (
     SettingField(
         "button_threshold",
         "ボタン判定の一致度",
-        "JOIN や CANCEL などボタン画像の一致度。低くすると誤クリック、高くすると見逃しやすい",
+        "JOIN や BACK などボタン画像の一致度。低くすると誤クリック、高くすると見逃しやすい",
         0.75, 0.50, 0.95, 0.01, "画像認識の感度",
     ),
     SettingField(
@@ -325,6 +326,11 @@ def normalize_config(config: dict) -> dict:
     matching = section("matching")
     window = section("window")
     meta = section("meta")
+    ui = section("ui")
+    for key in OBSOLETE_UI_KEYS:
+        if key in ui:
+            logger.info("不要になった ui.%s を削除します", key)
+            ui.pop(key)
 
     def enum_value(section: dict, key: str, valid: set[str], default: str) -> None:
         value = section.get(key, default)

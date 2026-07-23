@@ -24,9 +24,10 @@ class SetupStepSelectionTests(unittest.TestCase):
         steps = _steps_from_selection(["main_menu", "required_mods", "server_list"])
         self.assertEqual([s.name for s in steps], ["server_list", "required_mods", "main_menu"])
 
-    def test_full_selection(self) -> None:
-        steps = _steps_from_selection([s.name for s in SETUP_STEPS])
-        self.assertEqual(len(steps), len(SETUP_STEPS))
+    def test_connection_and_network_failure_steps_have_no_click_registration(self) -> None:
+        by_name = {step.name: step for step in SETUP_STEPS}
+        self.assertIsNone(by_name["connection_failed"].click_key)
+        self.assertIsNone(by_name["network_failure"].click_key)
 
 
 class SetupValidationTests(unittest.TestCase):

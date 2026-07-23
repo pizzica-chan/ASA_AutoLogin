@@ -566,13 +566,13 @@ class LoginAutomator:
 
         if self._has_connection_failed_dialog():
             user_log.info("接続に失敗しました。やり直します…")
-            detail_log.info("③-A を検出。CANCEL → ④ BACK → ⑤ JOIN GAME → ① を実行します")
+            detail_log.info("③-A を検出。Enter → ④ BACK → ⑤ JOIN GAME → ① を実行します")
             if not self._recover_after_connection_failed():
                 return False
 
         if self._has_network_failure_dialog():
             user_log.info("ネットワークエラーです。タイトル画面からやり直します…")
-            detail_log.info("⑥ を検出。ACCEPT → ⑦ → ⑤ JOIN GAME → ① を実行します")
+            detail_log.info("⑥ を検出。Enter → ⑦ → ⑤ JOIN GAME → ① を実行します")
             if not self._recover_after_network_failure():
                 return False
 
@@ -646,9 +646,7 @@ class LoginAutomator:
                 )
             return stable
         screen_map = {
-            "cancel_failed": "connection_failed",
             "back_empty_list": "server_list_empty",
-            "accept_network_failure": "network_failure",
         }
         screen_name = screen_map.get(button_key)
         if screen_name:
@@ -795,8 +793,6 @@ class LoginAutomator:
             "join_mods",
             "join_game",
             "back_empty_list",
-            "cancel_failed",
-            "accept_network_failure",
         }
         if button_key in hybrid_wait_keys:
             return self._wait_for_screen_before_click
@@ -899,12 +895,45 @@ class LoginAutomator:
 
     @staticmethod
     def _click_kind(button_key: str) -> str:
-        return (
-            "recovery"
-            if button_key
-            in {"cancel_failed", "back_empty_list", "accept_network_failure"}
-            else "primary"
-        )
+        return "recovery" if button_key == "back_empty_list" else "primary"
+
+    def _can_detect_connection_failed(self) -> bool:
+        if resolve_screen_path("connection_failed", self.templates.connection_failed):
+            return True
+        return self._can_use_button_detection("cancel_failed")
+
+    def _can_detect_network_failure(self) -> bool:
+        if resolve_screen_path("network_failure", self.templates.network_failure):
+            return True
+        return self._can_use_button_detection("accept_network_failure")
+
+    def _confirm_dialog_with_enter(
+        self,
+        screen_name: str,
+        button_key: str,
+        label: str,
+        timeout: float | None = None,
+    ) -> bool:
+        """エラーダイアログを検出したあと Enter キーで確定（CANCEL / ACCEPT 相当）"""
+        wait_timeout = timeout if timeout is not None else self.retry.transition_timeout
+        if not self._wait_for_screen(
+            screen_name,
+            wait_timeout,
+            button_key=self._screen_wait_button_fallback(button_key),
+        ):
+            user_log.warning("%s が見つかりませんでした（%d 秒待機）", label, int(wait_timeout))
+            detail_log.warning("%s が %d 秒以内に表示されませんでした", label, int(wait_timeout))
+            return False
+        if not self._sleep(self.retry.transition_settle):
+            return False
+        if not self._running or not self._focus_game():
+            user_log.warning("%s は ARK を前面にできないため Enter を送りません", label)
+            detail_log.warning("%s: Enter 送信直前のフォーカス確認に失敗", label)
+            return False
+        user_log.info("%s を Enter キーで確定します", label)
+        detail_log.info("%s Enter キー押下", label)
+        input_handler.press_key("enter")
+        return True
 
     def _click(self, point: Point, label: str, kind: str = "primary") -> None:
         abs_x, abs_y = self.ui.click_pixels(point)
@@ -1113,12 +1142,12 @@ class LoginAutomator:
 
             if self._has_network_failure_dialog(screen):
                 user_log.info("ネットワークエラーを検出しました")
-                detail_log.info("⑥ NETWORK FAILURE を検出（ACCEPT ボタン）")
+                detail_log.info("⑥ NETWORK FAILURE を検出（Enter で ACCEPT）")
                 return "failure_network"
 
             if self._has_connection_failed_dialog(screen):
                 user_log.info("接続失敗を検出しました")
-                detail_log.info("③-A CONNECTION FAILED を検出（CANCEL ボタン）")
+                detail_log.info("③-A CONNECTION FAILED を検出（Enter で CANCEL）")
                 return "failure_browser"
 
             if not self._sleep(self.retry.poll_seconds):
@@ -1140,11 +1169,18 @@ class LoginAutomator:
         """③-A CANCEL → ④ BACK → ⑤ JOIN GAME → ①"""
         self._set_state(LoginState.HANDLING_FAILURE)
 
-        if not self._has_connection_failed_dialog():
-            detail_log.warning("③-A: CANCEL ボタンが見えません")
+        if not self._can_detect_connection_failed():
+            detail_log.error(
+                "③-A のリカバリーに必要な画面テンプレートまたは cancel_failed ボタン画像がありません。"
+                "セットアップで connection_failed を登録するか、templates/buttons/cancel_failed.png を配置してください"
+            )
             return False
 
-        if not self._click_target_when_ready("cancel_failed", "③-A CANCEL"):
+        if not self._has_connection_failed_dialog():
+            detail_log.warning("③-A: ダイアログが見えません")
+            return False
+
+        if not self._confirm_dialog_with_enter("connection_failed", "cancel_failed", "③-A CANCEL"):
             return False
         self._wait_after_click()
 
@@ -1219,35 +1255,26 @@ class LoginAutomator:
         self._wait_after_click()
         return self._wait_for_step5_ready(self.retry.recovery_timeout)
 
-    def _has_network_failure_setup(self) -> bool:
-        if self._is_coordinates_only():
-            return self.ui.has_point("accept_network_failure")
-        return self.buttons.has("accept_network_failure") or self.ui.has_point(
-            "accept_network_failure"
-        )
-
     def _recover_after_network_failure(self) -> bool:
         """⑥ ACCEPT → ⑦ Space → ⑤ JOIN GAME → ① へ戻る"""
         self._set_state(LoginState.HANDLING_NETWORK_FAILURE)
 
-        if not self._has_network_failure_setup():
-            if self._is_coordinates_only():
-                detail_log.error(
-                    "⑥ のリカバリーに必要な ACCEPT 座標がありません。"
-                    "クリック座標タブで ui.accept_network_failure を設定してください"
-                )
-            else:
-                detail_log.error(
-                    "⑥ のリカバリーに必要な ACCEPT ボタン画像がありません。"
-                    "セットアップで⑥を登録するか、config の ui.accept_network_failure を設定してください"
-                )
+        if not self._can_detect_network_failure():
+            detail_log.error(
+                "⑥ のリカバリーに必要な画面テンプレートまたは accept_network_failure ボタン画像がありません。"
+                "セットアップで network_failure を登録するか、templates/buttons/accept_network_failure.png を配置してください"
+            )
             return False
 
         if not self._has_network_failure_dialog():
-            detail_log.warning("⑥: ACCEPT ボタンが見えません")
+            detail_log.warning("⑥: ダイアログが見えません")
             return False
 
-        if not self._click_target_when_ready("accept_network_failure", "⑥ ACCEPT"):
+        if not self._confirm_dialog_with_enter(
+            "network_failure",
+            "accept_network_failure",
+            "⑥ ACCEPT",
+        ):
             return False
         self._wait_after_click()
 

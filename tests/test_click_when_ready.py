@@ -22,10 +22,8 @@ class ClickWhenReadyTests(unittest.TestCase):
             ui = UiPositions.from_dict(
                 {
                     "join_server_list": {"x_percent": 92.0, "y_percent": 92.0},
-                    "cancel_failed": {"x_percent": 55.0, "y_percent": 55.0},
                     "back_empty_list": {"x_percent": 5.0, "y_percent": 92.0},
                     "join_game": {"x_percent": 29.0, "y_percent": 91.0},
-                    "accept_network_failure": {"x_percent": 50.0, "y_percent": 60.0},
                 },
             )
         return LoginAutomator(
