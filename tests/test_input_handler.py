@@ -38,5 +38,113 @@ class InputHandlerClickTests(unittest.TestCase):
         mock_configure.assert_called_once_with(True)
 
 
+class WindowStackingTests(unittest.TestCase):
+    @patch("src.input_handler._raise_dialog_above_game")
+    @patch("src.input_handler._raise_game_window")
+    @patch("src.input_handler.send_window_to_back")
+    @patch("src.input_handler.select_window")
+    def test_stack_windows_for_start_capture_orders_tool_game_dialog(
+        self,
+        mock_select,
+        mock_send_back,
+        mock_raise_game,
+        mock_raise_dialog,
+    ) -> None:
+        mock_select.return_value = input_handler.WindowSelection(
+            hwnd=200,
+            title="ARK",
+            process_id=1,
+            client_area=1000,
+            minimized=False,
+            candidate_count=1,
+        )
+        self.assertTrue(
+            input_handler.stack_windows_for_start_capture(
+                game_title_contains="ARK",
+                tool_hwnd=100,
+                dialog_hwnd=300,
+            ),
+        )
+        mock_send_back.assert_called_once_with(100)
+        mock_raise_game.assert_called_once_with(200)
+        mock_raise_dialog.assert_called_once_with(300)
+
+    @patch("src.input_handler._raise_dialog_above_game")
+    @patch("src.input_handler._raise_game_window")
+    @patch("src.input_handler.bring_window_to_front", return_value=True)
+    @patch("src.input_handler.select_window")
+    @patch("src.input_handler.send_window_to_back")
+    def test_prepare_with_dialog_reraises_dialog_without_long_bring(
+        self,
+        mock_send_back,
+        mock_select,
+        mock_bring,
+        mock_raise_game,
+        mock_raise_dialog,
+    ) -> None:
+        mock_select.return_value = input_handler.WindowSelection(
+            hwnd=200,
+            title="ARK",
+            process_id=1,
+            client_area=1000,
+            minimized=False,
+            candidate_count=1,
+        )
+        self.assertTrue(
+            input_handler.prepare_game_visible_for_capture(
+                game_title_contains="ARK",
+                tool_hwnd=100,
+                dialog_hwnd=300,
+            ),
+        )
+        mock_send_back.assert_called_once_with(100)
+        mock_raise_game.assert_called_once_with(200)
+        mock_bring.assert_not_called()
+        mock_raise_dialog.assert_called_once_with(300)
+
+    @patch("src.input_handler.bring_window_to_front", return_value=True)
+    @patch("src.input_handler.send_window_to_back")
+    def test_prepare_game_visible_for_capture_sends_tool_back(
+        self,
+        mock_send_back,
+        mock_bring,
+    ) -> None:
+        self.assertTrue(
+            input_handler.prepare_game_visible_for_capture(
+                game_title_contains="ARK",
+                tool_hwnd=100,
+            ),
+        )
+        mock_send_back.assert_called_once_with(100)
+        mock_bring.assert_called_once_with("ARK")
+
+    @patch("src.input_handler._raise_game_window")
+    @patch("src.input_handler.select_window")
+    @patch("src.input_handler.send_window_to_back")
+    def test_prepare_without_bring_to_front_still_raises_game(
+        self,
+        mock_send_back,
+        mock_select,
+        mock_raise_game,
+    ) -> None:
+        mock_select.return_value = input_handler.WindowSelection(
+            hwnd=200,
+            title="ARK",
+            process_id=1,
+            client_area=1000,
+            minimized=False,
+            candidate_count=1,
+        )
+        self.assertTrue(
+            input_handler.prepare_game_visible_for_capture(
+                game_title_contains="ARK",
+                tool_hwnd=100,
+                bring_game_to_front=False,
+            ),
+        )
+        mock_send_back.assert_called_once_with(100)
+        mock_raise_game.assert_called_once_with(200)
+
+
 if __name__ == "__main__":
     unittest.main()

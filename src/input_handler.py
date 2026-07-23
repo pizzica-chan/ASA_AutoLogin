@@ -173,3 +173,120 @@ def bring_window_to_front(title_contains: str) -> bool:
         return False
     detail_log.info("ウィンドウを前面に表示: %s (hwnd=%s)", title_contains, hwnd)
     return True
+
+
+def hwnd_from_tk(window) -> int:
+    """tkinter ウィンドウのトップレベル HWND を取得（Windows 専用）"""
+    hwnd = int(window.winfo_id())
+    try:
+        root = win32gui.GetAncestor(hwnd, win32con.GA_ROOT)
+        if root:
+            return int(root)
+    except Exception:
+        pass
+    return hwnd
+
+
+def send_window_to_back(hwnd: int) -> None:
+    """ウィンドウを Z 順序の背面へ送る（位置・サイズは変えない）"""
+    try:
+        win32gui.SetWindowPos(
+            hwnd,
+            win32con.HWND_BOTTOM,
+            0,
+            0,
+            0,
+            0,
+            win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE,
+        )
+        detail_log.debug("ウィンドウを背面へ: hwnd=%s", hwnd)
+    except Exception as exc:
+        detail_log.warning("ウィンドウを背面へ送れませんでした: hwnd=%s (%s)", hwnd, exc)
+
+
+def _raise_game_window(hwnd: int) -> None:
+    if win32gui.IsIconic(hwnd):
+        win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+    try:
+        win32gui.SetForegroundWindow(hwnd)
+    except Exception:
+        win32gui.ShowWindow(hwnd, win32con.SW_SHOW)
+        win32gui.BringWindowToTop(hwnd)
+
+
+def _raise_dialog_above_game(dialog_hwnd: int) -> None:
+    win32gui.SetWindowPos(
+        dialog_hwnd,
+        win32con.HWND_TOPMOST,
+        0,
+        0,
+        0,
+        0,
+        win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE,
+    )
+    try:
+        win32gui.SetForegroundWindow(dialog_hwnd)
+    except Exception:
+        win32gui.BringWindowToTop(dialog_hwnd)
+
+
+def stack_windows_for_start_capture(
+    *,
+    game_title_contains: str,
+    tool_hwnd: int,
+    dialog_hwnd: int | None = None,
+) -> bool:
+    """開始前確認用: ツール本体 < ARK < 確認ダイアログ の順に並べる"""
+    selection = select_window(game_title_contains)
+    if selection is None:
+        detail_log.warning("開始前ウィンドウ整列: ゲームが見つかりません (%s)", game_title_contains)
+        return False
+
+    send_window_to_back(tool_hwnd)
+    _raise_game_window(selection.hwnd)
+    if dialog_hwnd:
+        _raise_dialog_above_game(dialog_hwnd)
+    elif win32gui.GetForegroundWindow() == tool_hwnd:
+        # 本体が前面に残った場合の保険
+        _raise_game_window(selection.hwnd)
+
+    detail_log.info(
+        "開始前ウィンドウ整列: tool=%s game=%s dialog=%s",
+        tool_hwnd,
+        selection.hwnd,
+        dialog_hwnd,
+    )
+    return True
+
+
+def prepare_game_visible_for_capture(
+    *,
+    game_title_contains: str,
+    tool_hwnd: int | None = None,
+    bring_game_to_front: bool = True,
+    dialog_hwnd: int | None = None,
+) -> bool:
+    """画面キャプチャ直前にツールを背面へ。必要ならゲームを前面へ"""
+    if tool_hwnd:
+        send_window_to_back(tool_hwnd)
+
+    selection = select_window(game_title_contains)
+    if selection is None:
+        detail_log.warning("キャプチャ準備: ゲームが見つかりません (%s)", game_title_contains)
+        return False
+
+    if bring_game_to_front:
+        if dialog_hwnd:
+            # 診断ダイアログ表示中は長い待機付き前面化を避け、Z 順のみ整える
+            _raise_game_window(selection.hwnd)
+        else:
+            if not bring_window_to_front(game_title_contains):
+                if dialog_hwnd:
+                    _raise_dialog_above_game(dialog_hwnd)
+                return False
+    else:
+        _raise_game_window(selection.hwnd)
+
+    if dialog_hwnd:
+        _raise_dialog_above_game(dialog_hwnd)
+    return True

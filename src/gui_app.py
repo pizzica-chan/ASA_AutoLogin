@@ -88,7 +88,6 @@ class StartReadyDialog(tk.Toplevel):
         self._min_height = 420
         self.confirmed = False
 
-        self.transient(parent)
         self.grab_set()
 
         tk.Label(
@@ -161,12 +160,28 @@ class StartReadyDialog(tk.Toplevel):
         self.update_idletasks()
         self.minsize(520, 400)
         _place_dialog_near_parent(self, parent)
+        self.attributes("-topmost", True)
+
+        def _restack(_event: tk.Event | None = None) -> None:
+            if hasattr(parent, "_apply_start_window_stack"):
+                parent._apply_start_window_stack(self)
+
+        self.bind("<Map>", _restack, add="+")
+        self.after_idle(_restack)
+
+    def _clear_topmost(self) -> None:
+        try:
+            self.attributes("-topmost", False)
+        except tk.TclError:
+            pass
 
     def _on_cancel(self) -> None:
+        self._clear_topmost()
         self.confirmed = False
         self.destroy()
 
     def _on_confirm(self) -> None:
+        self._clear_topmost()
         self.confirmed = True
         self.destroy()
 
@@ -1057,25 +1072,99 @@ class LoginApp(tk.Tk):
         except Exception as exc:
             messagebox.showerror("診断エラー", f"診断情報を作成できませんでした。\n{exc}", parent=self)
 
-    def _run_preflight_with_progress(self, config: dict) -> PreflightReport | None:
+    def _game_window_title(self) -> str:
+        return self.window_title_var.get().strip() or "ARK: Survival Ascended"
+
+    def _enter_start_flow(self) -> None:
+        """開始確認中は本体 UI を隠し、ARK が見えるようにする"""
+        self.update_idletasks()
+        self.withdraw()
+
+    def _messagebox_while_hidden(self, func, *args, **kwargs):
+        """開始確認中（本体非表示）でもメッセージを出し、本体を前面に戻さない"""
+        hidden = not self.winfo_viewable()
+        kwargs.setdefault("parent", self)
+        result = func(*args, **kwargs)
+        if hidden:
+            self.withdraw()
+            self.update_idletasks()
+        return result
+
+    def _exit_start_flow(self, *, behind_game: bool = False) -> None:
+        """開始確認フロー終了後に本体 UI を復帰"""
+        self.deiconify()
+        self.update_idletasks()
+        if behind_game:
+            try:
+                self.lower()
+            except tk.TclError:
+                pass
+            self._apply_start_window_stack(None)
+        else:
+            self.lift()
+            try:
+                self.focus_force()
+            except tk.TclError:
+                pass
+
+    def _apply_start_window_stack(self, dialog: tk.Misc | None = None) -> bool:
+        """開始前確認・診断中: 確認ダイアログ > ARK > 本体 GUI"""
+        from . import input_handler
+
+        try:
+            self.lower()
+        except tk.TclError:
+            pass
+        self.update_idletasks()
+        dialog_hwnd = input_handler.hwnd_from_tk(dialog) if dialog is not None else None
+        ok = input_handler.stack_windows_for_start_capture(
+            game_title_contains=self._game_window_title(),
+            tool_hwnd=input_handler.hwnd_from_tk(self),
+            dialog_hwnd=dialog_hwnd,
+        )
+        if not ok:
+            self._append_log("ARK ウィンドウが見つからないため、前面整列をスキップしました")
+        return ok
+
+    def _run_preflight_with_progress(
+        self,
+        config: dict,
+        *,
+        use_cache: bool = True,
+    ) -> PreflightReport | None:
         cache_key = self._config_snapshot(config)
-        if self._preflight_cache:
+        if use_cache and self._preflight_cache:
             saved_key, saved_at, saved_report = self._preflight_cache
             if saved_key == cache_key and time.monotonic() - saved_at < 5.0:
                 return saved_report
         result_queue: queue.Queue = queue.Queue()
         dialog = tk.Toplevel(self)
         dialog.title("開始前診断")
-        dialog.transient(self)
         dialog.grab_set()
         dialog.resizable(False, False)
         ttk.Label(dialog, text="環境と画面を診断中…").pack(padx=30, pady=(20, 8))
         progress = ttk.Progressbar(dialog, mode="indeterminate", length=260)
         progress.pack(padx=30, pady=(0, 20))
         progress.start(12)
+        dialog.update_idletasks()
+        dialog.attributes("-topmost", True)
+        self._apply_start_window_stack(dialog)
+
+        from . import input_handler
+
+        tool_hwnd = input_handler.hwnd_from_tk(self)
+        dialog_hwnd = input_handler.hwnd_from_tk(dialog)
+        game_title = self._game_window_title()
+        bring_game = bool(config.get("window", {}).get("bring_to_front", True))
 
         def worker() -> None:
             try:
+                input_handler.prepare_game_visible_for_capture(
+                    game_title_contains=game_title,
+                    tool_hwnd=tool_hwnd,
+                    bring_game_to_front=bring_game,
+                    dialog_hwnd=dialog_hwnd,
+                )
                 result_queue.put(("ok", run_preflight(config)))
             except Exception as exc:
                 result_queue.put(("error", exc))
@@ -1086,6 +1175,10 @@ class LoginApp(tk.Tk):
             except queue.Empty:
                 dialog.after(50, poll)
                 return
+            try:
+                dialog.attributes("-topmost", False)
+            except tk.TclError:
+                pass
             dialog.result = (kind, value)
             dialog.destroy()
 
@@ -1102,32 +1195,40 @@ class LoginApp(tk.Tk):
         return value
 
     def _confirm_environment_preflight(self) -> bool:
+        self._preflight_cache = None
         try:
-            report = self._run_preflight_with_progress(self._get_form_config())
+            report = self._run_preflight_with_progress(
+                self._get_form_config(),
+                use_cache=False,
+            )
             if report is None:
                 return False
         except Exception as exc:
-            messagebox.showerror("開始前診断", f"診断を実行できませんでした。\n{exc}", parent=self)
+            self._messagebox_while_hidden(
+                messagebox.showerror,
+                "開始前診断",
+                f"診断を実行できませんでした。\n{exc}",
+            )
             return False
 
         detail_log.info("\n%s", report.to_text())
         if not report.can_start:
-            if messagebox.askyesno(
+            if self._messagebox_while_hidden(
+                messagebox.askyesno,
                 "開始できません",
                 report.to_text()
                 + "\n\n診断情報をコピーしますか？\n"
                 "必須キャプチャがない場合は「セットアップ」を実行してください。",
-                parent=self,
             ):
                 self._copy_diagnostics(report)
             return False
         if report.has_warnings:
-            return messagebox.askyesno(
+            return self._messagebox_while_hidden(
+                messagebox.askyesno,
                 "環境差を検出しました",
                 report.to_text()
                 + "\n\n再セットアップを推奨します。\n"
                 "内容を確認したうえで、このまま開始しますか？",
-                parent=self,
             )
         self._append_log("開始前診断: 問題は見つかりませんでした")
         return True
@@ -1241,13 +1342,13 @@ class LoginApp(tk.Tk):
             return True
         current_label = CAPTURE_MODE_VALUE_TO_LABEL.get(capture_settings.mode, capture_settings.mode)
         setup_label = CAPTURE_MODE_VALUE_TO_LABEL.get(setup_mode, setup_mode)
-        return messagebox.askyesno(
+        return self._messagebox_while_hidden(
+            messagebox.askyesno,
             "キャプチャ範囲がセットアップ時と異なります",
             f"現在: {current_label}\nセットアップ時: {setup_label}\n\n"
             "このまま開始すると画面判定やクリック位置がずれる可能性があります。\n"
             "「セットアップ」の再実行を推奨します。\n\n"
             "このまま開始しますか？",
-            parent=self,
         )
 
     def _on_reset_defaults(self) -> None:
@@ -1447,42 +1548,56 @@ class LoginApp(tk.Tk):
         if not self._preflight_start():
             return
 
-        dialog = StartReadyDialog(self)
-        self.wait_window(dialog)
-        if not dialog.confirmed:
-            return
-
-        if not self._confirm_environment_preflight():
-            return
-
-        capture_settings = self._get_capture_settings()
-        if capture_settings.mode == "window":
-            try:
-                resolve_capture_region(capture_settings, strict_window=True)
-            except WindowNotFoundError as exc:
-                messagebox.showerror("ウィンドウ未検出", str(exc), parent=self)
+        automation_started = False
+        self._enter_start_flow()
+        try:
+            dialog = StartReadyDialog(self)
+            self._apply_start_window_stack(dialog)
+            self.wait_window(dialog)
+            if not dialog.confirmed:
                 return
 
-        if not self._confirm_capture_mode_matches_setup(capture_settings):
-            return
+            if not self._confirm_environment_preflight():
+                return
 
-        try:
-            self._start_config = self._get_form_config()
-            self._automator = build_automator(
-                self._start_config,
-                on_state_change=self._on_state_change,
-            )
-        except Exception as exc:
-            messagebox.showerror("エラー", str(exc))
-            return
+            capture_settings = self._get_capture_settings()
+            if capture_settings.mode == "window":
+                try:
+                    resolve_capture_region(capture_settings, strict_window=True)
+                except WindowNotFoundError as exc:
+                    self._messagebox_while_hidden(
+                        messagebox.showerror,
+                        "ウィンドウ未検出",
+                        str(exc),
+                    )
+                    return
 
-        self._running = True
-        self.start_btn.configure(state=tk.DISABLED)
-        self.stop_btn.configure(state=tk.NORMAL)
-        self._set_status("準備中...", COLORS["warning"])
+            if not self._confirm_capture_mode_matches_setup(capture_settings):
+                return
 
-        self._worker = threading.Thread(target=self._run_worker, daemon=True)
-        self._worker.start()
+            try:
+                self._start_config = self._get_form_config()
+                self._automator = build_automator(
+                    self._start_config,
+                    on_state_change=self._on_state_change,
+                )
+            except Exception as exc:
+                self._messagebox_while_hidden(messagebox.showerror, "エラー", str(exc))
+                return
+
+            self._exit_start_flow(behind_game=True)
+            automation_started = True
+
+            self._running = True
+            self.start_btn.configure(state=tk.DISABLED)
+            self.stop_btn.configure(state=tk.NORMAL)
+            self._set_status("準備中...", COLORS["warning"])
+
+            self._worker = threading.Thread(target=self._run_worker, daemon=True)
+            self._worker.start()
+        finally:
+            if not automation_started:
+                self._exit_start_flow()
 
     def _on_stop(self) -> None:
         self._running = False
