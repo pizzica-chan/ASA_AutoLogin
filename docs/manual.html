@@ -808,6 +808,11 @@ python gui.py</pre>
           </tr>
           <tr>
             <td>成功判定（推奨）</td>
+            <td><code>templates/buttons/login_success.png</code>（右下 HUD）</td>
+            <td>—</td>
+          </tr>
+          <tr>
+            <td>成功判定（フォールバック）</td>
             <td><code>templates/in_game.png</code></td>
             <td>—</td>
           </tr>
@@ -1272,7 +1277,7 @@ python gui.py</pre>
             <td>
               <span class="priority">1</span>③ ログイン結果の待ちを延長<br>
               <span class="priority">2</span>ログイン動画の追加待ちを延長<br>
-              <span class="priority">3</span><code>in_game.png</code> をセットアップ登録
+              <span class="priority">3</span><code>login_success.png</code>（右下 HUD）を差し替え、または <code>in_game.png</code> をセットアップ登録
             </td>
             <td>待ち時間 / セットアップ</td>
           </tr>
@@ -1420,7 +1425,7 @@ python gui.py</pre>
           <tbody>
             <tr>
               <td>成功なのにタイムアウト</td>
-              <td>③ ログイン結果の待ち・ログイン動画の追加待ちを延長 → <code>in_game.png</code> 登録</td>
+              <td>③ ログイン結果の待ち・ログイン動画の追加待ちを延長 → <code>login_success.png</code>（右下 HUD）差し替え、または <code>in_game.png</code> 登録</td>
             </tr>
             <tr>
               <td>長時間待ち（正常系）</td>
@@ -1432,7 +1437,7 @@ python gui.py</pre>
             </tr>
           </tbody>
         </table>
-        <p class="matrix-note">③ はクリック操作なし。待ち時間と成功画面テンプレートが中心。</p>
+        <p class="matrix-note">③ はクリック操作なし。待ち時間と成功判定（<code>login_success.png</code> 優先 → <code>in_game.png</code>）が中心。サーバー一覧表示中は成功判定を行いません。</p>
       </article>
 
       <article id="tune-recovery" class="tune-card">

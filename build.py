@@ -97,6 +97,7 @@ def main() -> None:
   templates/buttons/ … ボタン認識用画像（PNG を差し替え可能）
     join_game.png … ④枚タイル（左寄り JOIN GAME）
     join_game_center.png … ⑤枚タイル（中央 JOIN GAME）
+    login_success.png … ③ ログイン成功 HUD（右下）
   logs/asa_login_user.log … わかりやすいログ
   logs/asa_login_detail.log … 詳細ログ（原因調査用）
 

@@ -228,9 +228,10 @@ SETUP_STEPS: tuple[SetupStep, ...] = (
         sample_image=None,
         prepare_lines=(
             "サーバー参加に成功したゲーム内画面です。",
-            "成功判定に使います。推奨ですがスキップ可能です。",
+            "成功判定は templates/buttons/login_success.png（右下 HUD）を優先します。",
+            "画面全体の in_game.png は未登録時のフォールバックです。",
         ),
-        capture_hint="ゲーム内の画面をキャプチャします。",
+        capture_hint="任意: ゲーム内全体をキャプチャ（login_success 未使用時のフォールバック用）",
     ),
 )
 

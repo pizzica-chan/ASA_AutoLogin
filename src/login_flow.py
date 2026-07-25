@@ -29,11 +29,14 @@ MODS_JOIN_SEARCH_REGION = (0.0, 0.0, 0.58, 1.0)
 MODS_SCREEN_COMPARE_REGION = (0.15, 0.08, 0.85, 0.92)
 # ⑤ JOIN GAME は左寄り4枚レイアウトが主流のため、右側の別カード誤検出を避ける
 JOIN_GAME_SEARCH_REGION = (0.0, 0.0, 0.72, 1.0)
+# ログイン成功 HUD（重量・水分など）は画面右下の縦列
+LOGIN_SUCCESS_SEARCH_REGION = (0.78, 0.40, 1.0, 1.0)
 BUTTON_SEARCH_REGIONS = {
     "join_server_list": (0.55, 0.55, 1.0, 1.0),
     "cancel_failed": (0.30, 0.25, 0.90, 0.85),
     "accept_network_failure": (0.20, 0.25, 0.80, 0.85),
     "back_empty_list": (0.0, 0.60, 0.40, 1.0),
+    "login_success": LOGIN_SUCCESS_SEARCH_REGION,
 }
 
 
@@ -95,6 +98,7 @@ class TemplateConfig:
     skip_required_mods: bool = False  # True なら ② を省略して ③ へ
     screen_ready_margin: float = 0.05
     click_mode: str = "image"  # image | image_only | coordinates | coordinates_only
+    login_success_threshold: float = 0.62  # 右下 HUD（背景差分あり）
 
 
 @dataclass
@@ -278,17 +282,27 @@ class LoginAutomator:
             search_region = MODS_JOIN_SEARCH_REGION
         if search_region is None and button_key == "join_game":
             search_region = JOIN_GAME_SEARCH_REGION
+        if search_region is None and button_key == "login_success":
+            search_region = LOGIN_SUCCESS_SEARCH_REGION
         if search_region is None:
             search_region = BUTTON_SEARCH_REGIONS.get(button_key)
 
         use_strict = strict
         if button_key == "join_game":
             use_strict = False
-        thresholds = (
-            (self.buttons.threshold,)
-            if use_strict
-            else (self.buttons.threshold, self.buttons.threshold_relaxed)
-        )
+        if button_key == "login_success":
+            use_strict = False
+        thresholds: tuple[float, ...]
+        if button_key == "login_success":
+            primary = self.templates.login_success_threshold
+            relaxed = min(primary, self.buttons.threshold_relaxed)
+            if relaxed >= primary:
+                relaxed = max(0.50, primary - 0.07)
+            thresholds = (primary, relaxed)
+        elif use_strict:
+            thresholds = (self.buttons.threshold,)
+        else:
+            thresholds = (self.buttons.threshold, self.buttons.threshold_relaxed)
         best = MatchResult(False, 0.0, 0, 0, (0, 0), (0, 0))
 
         for path in paths:
@@ -322,6 +336,24 @@ class LoginAutomator:
             self.buttons.threshold,
             self.buttons.threshold_relaxed,
         )
+
+    def _is_login_success_ready(self, screen=None) -> tuple[bool, float, str]:
+        """ログイン成功判定: 右下 HUD (login_success) 優先、未設定時は in_game 画面テンプレ"""
+        if screen is None:
+            screen = self.vision.capture_screen()
+
+        hud_score = 0.0
+        if self.buttons.has("login_success"):
+            hud = self._find_button("login_success", screen=screen, strict=False)
+            hud_score = hud.confidence
+            if hud.found:
+                return True, hud_score, "login_success"
+
+        in_game, screen_score = self._match_screen("in_game", screen=screen)
+        if in_game:
+            return True, screen_score, "in_game"
+
+        return False, max(hud_score, screen_score), ""
 
     def _mods_compare_region(self) -> tuple[float, float, float, float] | None:
         if self.templates.mods_screen_region == "center":
@@ -570,14 +602,35 @@ class LoginAutomator:
         if self._has_network_failure_dialog(screen):
             return False, 0.0
 
+        score = self._screen_score("server_list", screen=screen)
         if not self._is_coordinates_only():
             join = self._find_button("join_server_list", screen=screen, strict=True)
             if not join.found:
-                return False, 0.0
+                return False, score
 
-        score = self._screen_score("server_list", screen=screen)
         ready = score >= self.templates.screen_threshold - self.templates.screen_ready_margin
         return ready, score
+
+    def _server_list_visible_score(self, screen=None) -> float:
+        """サーバー一覧らしさ（JOIN 有無に依存しない画面スコア）"""
+        if screen is None:
+            screen = self.vision.capture_screen()
+        return self._screen_score("server_list", screen=screen)
+
+    def _is_server_list_visible(self, screen=None, *, score: float | None = None) -> bool:
+        """サーバー一覧が表示中か（JOIN 未検出でも画面スコアで判定）"""
+        if score is None:
+            score = self._server_list_visible_score(screen=screen)
+        threshold = self.templates.screen_threshold - self.templates.screen_ready_margin
+        return score >= threshold
+
+    def _is_join_server_list_visible(self, screen=None) -> bool:
+        """① JOIN ボタンが見えているか（画面スコア不足時の一覧判定用）"""
+        if self._is_coordinates_only():
+            return False
+        if screen is None:
+            screen = self.vision.capture_screen()
+        return self._find_button("join_server_list", screen=screen, strict=True).found
 
     def _match_screen(self, screen_name: str, screen=None) -> tuple[bool, float]:
         """画面テンプレート一致（エラー系はボタンで別判定）"""
@@ -1167,7 +1220,22 @@ class LoginAutomator:
         while self._running and time.time() < deadline:
             screen = self.vision.capture_screen()
 
-            ready, score = self._is_server_list_ready(screen=screen)
+            # 失敗ダイアログは成功判定より先（誤 success を防ぐ）
+            if self._has_network_failure_dialog(screen):
+                user_log.info("ネットワークエラーを検出しました")
+                detail_log.info("⑥ NETWORK FAILURE を検出（Enter で ACCEPT）")
+                return "failure_network"
+
+            if self._has_connection_failed_dialog(screen):
+                user_log.info("接続失敗を検出しました")
+                detail_log.info("③-A CONNECTION FAILED を検出（Enter で CANCEL）")
+                return "failure_browser"
+
+            list_score = self._server_list_visible_score(screen=screen)
+            list_visible = self._is_server_list_visible(screen=screen, score=list_score)
+
+            # 停滞タイマーは JOIN 検出込みの ready のみ（接続ロード中の誤リトライ防止）
+            ready, ready_score = self._is_server_list_ready(screen=screen)
             if ready:
                 if stuck_on_server_list_since is None:
                     stuck_on_server_list_since = time.time()
@@ -1179,17 +1247,23 @@ class LoginAutomator:
                     detail_log.warning(
                         "③ 停滞判定: server_list が %.0f 秒以上 (類似度: %.2f)",
                         self.retry.stuck_server_list_seconds,
-                        score,
+                        ready_score,
                     )
                     return "timeout"
             else:
                 stuck_on_server_list_since = None
 
-            in_game, score = self._match_screen("in_game", screen=screen)
-            if in_game:
-                user_log.info("ゲーム内画面を検出しました")
-                detail_log.info("ログイン成功画面を検出 (類似度: %.2f)", score)
-                return "success"
+            # 一覧っぽい、または JOIN が見えている間は成功判定スキップ（右下 HUD 誤検出防止）
+            skip_success = list_visible or self._is_join_server_list_visible(screen=screen)
+            if not skip_success:
+                in_game, score, method = self._is_login_success_ready(screen=screen)
+                if in_game:
+                    user_log.info("ゲーム内画面を検出しました")
+                    if method == "login_success":
+                        detail_log.info("ログイン成功 HUD を検出 (類似度: %.2f)", score)
+                    else:
+                        detail_log.info("ログイン成功画面を検出 (類似度: %.2f)", score)
+                    return "success"
 
             movie, movie_score = self._match_screen("login_movie", screen=screen)
             if movie:
@@ -1207,16 +1281,6 @@ class LoginAutomator:
                 if not self._sleep(self.retry.poll_seconds):
                     return "stopped"
                 continue
-
-            if self._has_network_failure_dialog(screen):
-                user_log.info("ネットワークエラーを検出しました")
-                detail_log.info("⑥ NETWORK FAILURE を検出（Enter で ACCEPT）")
-                return "failure_network"
-
-            if self._has_connection_failed_dialog(screen):
-                user_log.info("接続失敗を検出しました")
-                detail_log.info("③-A CONNECTION FAILED を検出（Enter で CANCEL）")
-                return "failure_browser"
 
             if not self._sleep(self.retry.poll_seconds):
                 return "stopped"

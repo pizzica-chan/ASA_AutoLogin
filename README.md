@@ -62,6 +62,7 @@ python gui.py            # 起動（初回セットアップも GUI から）
 他のウィンドウへ入力せず待機して再試行します。「停止」は長い待機中でも直ちに反映されます。
 セットアップでクリック位置を登録すると、環境専用のボタン画像も
 `templates/buttons/captured/` に生成され、同梱画像より優先されます。
+③ のログイン成功判定は `templates/buttons/login_success.png`（右下 HUD）を優先し、未配置時は `in_game.png` にフォールバックします。
 
 ## セットアップ
 

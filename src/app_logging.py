@@ -46,6 +46,7 @@ BUTTON_KEYS = (
     "join_game",
     "join_game_center",
     "accept_network_failure",
+    "login_success",
 )
 
 _gui_handlers: list[logging.Handler] = []

@@ -37,6 +37,7 @@ BUNDLED_BUTTON_NAMES = (
     "join_game",
     "join_game_center",
     "accept_network_failure",
+    "login_success",
 )
 
 # フォールバックを同梱する画面テンプレート（templates/ 未保存時に参照）

@@ -73,7 +73,8 @@ ARK: Survival Ascended のサーバー参加を自動化する際の画面遷移
 |------|------|
 | **状態** | 接続処理中（ローディングムービー等） |
 | **操作** | 待機のみ（クリックなし） |
-| **成功判定** | `templates/in_game.png` と画面の類似度が閾値以上 |
+| **成功判定** | 右下 HUD `templates/buttons/login_success.png` を優先（右下 ROI で template match）。未配置時は `templates/in_game.png` にフォールバック |
+| **判定順** | 失敗ダイアログ（⑥ / ③-A）→ 停滞タイマー（`ready` = JOIN + 画面スコア）→ 成功判定スキップ（`visible` または JOIN 表示中）→ 成功 → ログイン動画 |
 | **タイムアウト** | `result_timeout`（デフォルト 120 秒）。ムービー検出時は `login_movie_timeout`（デフォルト 120 秒）まで延長 |
 
 ② の JOIN 後、失敗には **2 パターン** あります。

@@ -171,6 +171,12 @@ MATCHING_FIELDS: tuple[SettingField, ...] = (
         0.68, 0.45, 0.90, 0.01, "画像認識の感度",
     ),
     SettingField(
+        "login_success_threshold",
+        "ログイン成功 HUD の一致度",
+        "③ 右下 HUD（login_success.png）の一致度。背景差分があるため通常ボタンより低め",
+        0.62, 0.45, 0.90, 0.01, "画像認識の感度",
+    ),
+    SettingField(
         "mods_screen_threshold",
         "② MODS 画面の一致度",
         "MODS 画面が出ているかの判定。低くすると見逃しにくいが誤判定も増える",
@@ -536,6 +542,7 @@ def build_automator(
         skip_required_mods=bool(matching_cfg.get("skip_required_mods", False)),
         screen_ready_margin=float(matching_cfg.get("screen_ready_margin", 0.05)),
         click_mode=matching_cfg.get("click_mode", "image"),
+        login_success_threshold=float(matching_cfg.get("login_success_threshold", 0.62)),
     )
 
     retry = RetryConfig(

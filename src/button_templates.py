@@ -20,6 +20,7 @@ REQUIRED_BUTTONS = (
 OPTIONAL_BUTTONS = (
     "join_mods",
     "accept_network_failure",
+    "login_success",
 )
 
 

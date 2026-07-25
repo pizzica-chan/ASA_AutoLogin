@@ -30,6 +30,7 @@ matching:
   screen_threshold: 0.75       # 画面全体の一致度
   button_threshold: 0.75       # ボタン画像の一致度
   button_threshold_relaxed: 0.68 # ボタン再検索時の緩い一致度
+  login_success_threshold: 0.62  # ③ ログイン成功 HUD（右下・背景差分あり）
   mods_screen_threshold: 0.55  # ② MODS 画面の一致度
   mods_detect_mode: hybrid       # hybrid | screen | button（② MODS の検出方法）
   mods_screen_region: center     # center | full（② 画面比較の範囲）
@@ -51,6 +52,7 @@ templates:
 
 # 座標フォールバック（① / ② / ④ / ⑤。③-A / ⑥ は Enter 確定のため ui 座標不要）
 # ボタン画像は templates/buttons/ の PNG を使用・差し替え可（③-A / ⑥ 用はダイアログ検出用）
+# login_success.png … ③ ログイン成功判定（右下 HUD。同梱デフォルトあり）
 ui:
   join_server_list:
     x_percent: 92.0
