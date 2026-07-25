@@ -980,14 +980,14 @@ python gui.py</pre>
           <tr><td>Webhook URL</td><td><code>https://discord.com/api/webhooks/...</code> 形式（旧 <code>discordapp.com</code> も可）。他人に見せないでください</td></tr>
           <tr><td>メンション（ユーザー ID）</td><td>カンマ区切り。開発者モードでユーザー ID をコピー</td></tr>
           <tr><td>@everyone</td><td>通知本文の先頭に <code>@everyone</code> を付与</td></tr>
-          <tr><td>スクショ添付</td><td>通知時にゲーム画面（キャプチャ領域）の PNG を添付。黒画面・取得失敗時はテキストのみ</td></tr>
-          <tr><td>停滞通知（n 回）</td><td>同じ問題が n 回連続したとき追加通知。<code>0</code> で無効</td></tr>
+          <tr><td>スクショ添付</td><td>通知時にゲーム画面（キャプチャ領域）の PNG を添付（デフォルト ON）。黒画面・取得失敗時はテキストのみ</td></tr>
+          <tr><td>停滞通知（n 回）</td><td>同じ問題が n 回連続したとき追加通知（デフォルト <code>10</code>）。<code>0</code> で無効</td></tr>
           <tr><td>テスト送信</td><td>現在のフォーム設定で試し送り（保存前の内容も反映）</td></tr>
         </tbody>
       </table>
 
       <h3>停滞通知の例</h3>
-      <p><code>stuck_repeat_threshold</code> を <code>5</code> にすると、次のような状態が 5 回連続したときに通知します（1 回の停滞エピソードにつき 1 通知）。</p>
+      <p><code>stuck_repeat_threshold</code> を <code>10</code>（デフォルト）にすると、次のような状態が 10 回連続したときに通知します（1 回の停滞エピソードにつき 1 通知）。</p>
       <ul>
         <li>① サーバー一覧に戻れない</li>
         <li>⑥ からの復帰に失敗し続ける</li>
@@ -1012,7 +1012,7 @@ python gui.py</pre>
     mention_user_ids: ["123456789012345678"]
     mention_everyone: false
     attach_screenshot: true
-    stuck_repeat_threshold: 5</pre>
+    stuck_repeat_threshold: 10</pre>
     </section>
 
     <section id="buttons">

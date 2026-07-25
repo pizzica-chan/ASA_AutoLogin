@@ -18,7 +18,7 @@ from .button_templates import ButtonConfig
 from .capture import CaptureSettings, DEFAULT_CAPTURE_MODE
 from .default_assets import ensure_default_assets
 from .login_flow import LoginAutomator, LoginState, RetryConfig, TemplateConfig
-from .notifier import parse_mention_user_ids
+from .notifier import normalize_discord_section, parse_mention_user_ids
 from .ui_positions import UiPositions
 from .vision import Vision
 
@@ -251,10 +251,16 @@ def load_default_config() -> dict:
     raise FileNotFoundError("config.example.yaml が見つかりません")
 
 
-def save_config(config: dict, config_path: str | Path | None = None) -> None:
+def save_config(
+    config: dict,
+    config_path: str | Path | None = None,
+    *,
+    backup_before_write: bool = True,
+    legacy_discord_defaults: bool = False,
+) -> None:
     from .default_assets import prune_stale_template_paths
 
-    config = normalize_config(config)
+    config = normalize_config(config, legacy_discord_defaults=legacy_discord_defaults)
     prune_stale_template_paths(config)
     path = Path(config_path) if config_path else CONFIG_PATH
     text = yaml.dump(
@@ -263,14 +269,14 @@ def save_config(config: dict, config_path: str | Path | None = None) -> None:
         default_flow_style=False,
         sort_keys=False,
     )
-    _atomic_write_config(path, text)
+    _atomic_write_config(path, text, backup_before_write=backup_before_write)
 
 
-def _atomic_write_config(path: Path, text: str) -> None:
+def _atomic_write_config(path: Path, text: str, *, backup_before_write: bool = True) -> None:
     """正常な旧設定を保持し、同一ディレクトリ内で原子的に置換する。"""
     path.parent.mkdir(parents=True, exist_ok=True)
     backup = path.with_suffix(path.suffix + ".bak")
-    if path.exists():
+    if backup_before_write and path.exists():
         try:
             current = yaml.safe_load(path.read_text(encoding="utf-8"))
             if isinstance(current, dict):
@@ -305,11 +311,13 @@ def restore_config_backup(config_path: str | Path | None = None) -> bool:
     loaded = yaml.safe_load(backup.read_text(encoding="utf-8"))
     if not isinstance(loaded, dict):
         return False
-    save_config(loaded, path)
+    # 退避ファイル自体を壊れた現行設定で上書きしない（引き継ぎ退避を含む）
+    # .bak に無い Discord キーは旧既定 OFF/0 を維持する
+    save_config(loaded, path, backup_before_write=False, legacy_discord_defaults=True)
     return True
 
 
-def normalize_config(config: dict) -> dict:
+def normalize_config(config: dict, *, legacy_discord_defaults: bool = False) -> dict:
     """旧設定を保持しつつ、実行不能な型・範囲・列挙値だけを安全値へ直す。"""
     normalized = copy.deepcopy(config)
 
@@ -336,11 +344,7 @@ def normalize_config(config: dict) -> dict:
     discord["webhook_url"] = str(discord.get("webhook_url") or "").strip()
     discord["mention_user_ids"] = list(parse_mention_user_ids(discord.get("mention_user_ids")))
     discord["mention_everyone"] = bool(discord.get("mention_everyone", False))
-    discord["attach_screenshot"] = bool(discord.get("attach_screenshot", False))
-    try:
-        discord["stuck_repeat_threshold"] = max(0, int(discord.get("stuck_repeat_threshold", 0)))
-    except (TypeError, ValueError):
-        discord["stuck_repeat_threshold"] = 0
+    normalize_discord_section(discord, use_legacy_defaults=legacy_discord_defaults)
     ui = section("ui")
     for key in OBSOLETE_UI_KEYS:
         if key in ui:

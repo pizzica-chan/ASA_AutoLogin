@@ -37,14 +37,45 @@ STUCK_PHASE_LABELS: dict[str, str] = {
 }
 
 
+DEFAULT_ATTACH_SCREENSHOT = True
+DEFAULT_STUCK_REPEAT_THRESHOLD = 10
+LEGACY_DEFAULT_ATTACH_SCREENSHOT = False
+LEGACY_DEFAULT_STUCK_REPEAT_THRESHOLD = 0
+
+
+def normalize_discord_section(discord: dict, *, use_legacy_defaults: bool = False) -> None:
+    """Discord 通知サブセクションを正規化する（dict をその場で更新）。"""
+    attach_default = (
+        LEGACY_DEFAULT_ATTACH_SCREENSHOT if use_legacy_defaults else DEFAULT_ATTACH_SCREENSHOT
+    )
+    stuck_default = (
+        LEGACY_DEFAULT_STUCK_REPEAT_THRESHOLD
+        if use_legacy_defaults
+        else DEFAULT_STUCK_REPEAT_THRESHOLD
+    )
+
+    if "attach_screenshot" in discord:
+        discord["attach_screenshot"] = bool(discord["attach_screenshot"])
+    else:
+        discord["attach_screenshot"] = attach_default
+
+    if "stuck_repeat_threshold" in discord:
+        try:
+            discord["stuck_repeat_threshold"] = max(0, int(discord["stuck_repeat_threshold"]))
+        except (TypeError, ValueError):
+            discord["stuck_repeat_threshold"] = LEGACY_DEFAULT_STUCK_REPEAT_THRESHOLD
+    else:
+        discord["stuck_repeat_threshold"] = stuck_default
+
+
 @dataclass(frozen=True)
 class DiscordNotificationConfig:
     enabled: bool = False
     webhook_url: str = ""
     mention_user_ids: tuple[str, ...] = ()
     mention_everyone: bool = False
-    attach_screenshot: bool = False
-    stuck_repeat_threshold: int = 0
+    attach_screenshot: bool = DEFAULT_ATTACH_SCREENSHOT
+    stuck_repeat_threshold: int = DEFAULT_STUCK_REPEAT_THRESHOLD
 
 
 def parse_mention_user_ids(value: str | list | tuple | None) -> tuple[str, ...]:
@@ -91,17 +122,14 @@ def parse_discord_notification_config(config: dict | None) -> DiscordNotificatio
     enabled = bool(discord.get("enabled", False))
     webhook_url = str(discord.get("webhook_url") or "").strip()
     mention_user_ids = parse_mention_user_ids(discord.get("mention_user_ids"))
-    try:
-        stuck_repeat_threshold = max(0, int(discord.get("stuck_repeat_threshold", 0)))
-    except (TypeError, ValueError):
-        stuck_repeat_threshold = 0
+    normalize_discord_section(discord, use_legacy_defaults=False)
     return DiscordNotificationConfig(
         enabled=enabled,
         webhook_url=webhook_url,
         mention_user_ids=mention_user_ids,
         mention_everyone=bool(discord.get("mention_everyone", False)),
-        attach_screenshot=bool(discord.get("attach_screenshot", False)),
-        stuck_repeat_threshold=stuck_repeat_threshold,
+        attach_screenshot=discord["attach_screenshot"],
+        stuck_repeat_threshold=discord["stuck_repeat_threshold"],
     )
 
 

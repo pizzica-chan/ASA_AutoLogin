@@ -76,8 +76,8 @@ notifications:
     webhook_url: ""
     mention_user_ids: []  # Discord ユーザー ID（例: ["123456789012345678"]）
     mention_everyone: false  # true なら @everyone を付与
-    attach_screenshot: false  # true なら通知時にゲーム画面のスクショを添付（黒画面時は省略）
-    stuck_repeat_threshold: 0  # 同じフェーズが n 回連続で進まないとき停滞通知（0=無効）
+    attach_screenshot: true  # true なら通知時にゲーム画面のスクショを添付（黒画面時は省略）
+    stuck_repeat_threshold: 10  # 同じフェーズが n 回連続で進まないとき停滞通知（0=無効）
     # 終了時通知: 成功・失敗・エラー。手動停止（停止ボタン）では送らない
 
 logging:

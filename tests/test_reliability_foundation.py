@@ -11,8 +11,9 @@ from unittest.mock import MagicMock, patch
 
 import cv2
 import numpy as np
+import yaml
 
-from src.app_service import build_vision, load_config, save_config
+from src.app_service import build_vision, load_config, restore_config_backup, save_config
 from src.button_templates import extract_and_save_button_crop, verify_button_crop
 from src.login_flow import LoginAutomator, RetryConfig, TemplateConfig
 
@@ -28,6 +29,43 @@ class AtomicConfigTests(unittest.TestCase):
                     save_config({"retry": {"max_attempts": 2}}, path)
             self.assertEqual(path.read_text(encoding="utf-8"), original)
             self.assertEqual(load_config(path)["retry"]["max_attempts"], 1)
+
+    def test_restore_config_backup_does_not_overwrite_bak(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "config.yaml"
+            backup = path.with_suffix(path.suffix + ".bak")
+            backup.write_text("retry:\n  max_attempts: 9\n", encoding="utf-8")
+            path.write_text("retry:\n  max_attempts: 1\n", encoding="utf-8")
+
+            self.assertTrue(restore_config_backup(path))
+            self.assertEqual(load_config(path)["retry"]["max_attempts"], 9)
+            restored_bak = yaml.safe_load(backup.read_text(encoding="utf-8"))
+            self.assertEqual(restored_bak["retry"]["max_attempts"], 9)
+
+    def test_restore_config_backup_preserves_legacy_discord_defaults(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "config.yaml"
+            backup = path.with_suffix(path.suffix + ".bak")
+            backup.write_text(
+                yaml.dump(
+                    {
+                        "notifications": {
+                            "discord": {
+                                "enabled": True,
+                                "webhook_url": "https://discord.com/api/webhooks/1/abc",
+                            },
+                        },
+                    },
+                    allow_unicode=True,
+                ),
+                encoding="utf-8",
+            )
+            path.write_text("retry:\n  max_attempts: 1\n", encoding="utf-8")
+
+            self.assertTrue(restore_config_backup(path))
+            discord = load_config(path)["notifications"]["discord"]
+            self.assertFalse(discord["attach_screenshot"])
+            self.assertEqual(discord["stuck_repeat_threshold"], 0)
 
 
 class InterruptibleWaitTests(unittest.TestCase):

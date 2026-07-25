@@ -29,6 +29,8 @@ class NotifierConfigTests(unittest.TestCase):
         cfg = parse_discord_notification_config({})
         self.assertFalse(cfg.enabled)
         self.assertEqual(cfg.webhook_url, "")
+        self.assertTrue(cfg.attach_screenshot)
+        self.assertEqual(cfg.stuck_repeat_threshold, 10)
 
     def test_parse_discord_settings(self) -> None:
         cfg = parse_discord_notification_config(
@@ -105,6 +107,65 @@ class NotifierConfigTests(unittest.TestCase):
             },
         )
         self.assertEqual(normalized["notifications"]["discord"]["mention_user_ids"], ["111", "222"])
+
+    def test_normalize_discord_defaults(self) -> None:
+        normalized = normalize_config({})
+        discord = normalized["notifications"]["discord"]
+        self.assertTrue(discord["attach_screenshot"])
+        self.assertEqual(discord["stuck_repeat_threshold"], 10)
+
+    def test_normalize_discord_preserves_explicit_off(self) -> None:
+        normalized = normalize_config(
+            {
+                "notifications": {
+                    "discord": {
+                        "attach_screenshot": False,
+                        "stuck_repeat_threshold": 0,
+                    },
+                },
+            },
+        )
+        discord = normalized["notifications"]["discord"]
+        self.assertFalse(discord["attach_screenshot"])
+        self.assertEqual(discord["stuck_repeat_threshold"], 0)
+
+    def test_normalize_invalid_stuck_threshold_disables_notification(self) -> None:
+        normalized = normalize_config(
+            {
+                "notifications": {
+                    "discord": {
+                        "stuck_repeat_threshold": "bad",
+                    },
+                },
+            },
+        )
+        self.assertEqual(
+            normalized["notifications"]["discord"]["stuck_repeat_threshold"],
+            0,
+        )
+
+    def test_normalize_legacy_discord_defaults(self) -> None:
+        normalized = normalize_config(
+            {
+                "notifications": {
+                    "discord": {
+                        "enabled": True,
+                        "webhook_url": "https://discord.com/api/webhooks/1/abc",
+                    },
+                },
+            },
+            legacy_discord_defaults=True,
+        )
+        discord = normalized["notifications"]["discord"]
+        self.assertFalse(discord["attach_screenshot"])
+        self.assertEqual(discord["stuck_repeat_threshold"], 0)
+
+    def test_load_default_config_discord_defaults(self) -> None:
+        from src.app_service import load_default_config
+
+        discord = load_default_config()["notifications"]["discord"]
+        self.assertTrue(discord["attach_screenshot"])
+        self.assertEqual(discord["stuck_repeat_threshold"], 10)
 
     def test_normalize_attach_screenshot(self) -> None:
         normalized = normalize_config(

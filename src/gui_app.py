@@ -11,7 +11,7 @@ import time
 import tkinter as tk
 import webbrowser
 from pathlib import Path
-from tkinter import messagebox, scrolledtext, ttk
+from tkinter import filedialog, messagebox, scrolledtext, ttk
 
 from PIL import Image, ImageTk
 
@@ -48,6 +48,8 @@ from .coordinate_preview import pick_coordinate_on_screen, show_coordinate_previ
 from .display import list_monitors
 from .login_flow import LoginState
 from .notifier import (
+    DEFAULT_ATTACH_SCREENSHOT,
+    DEFAULT_STUCK_REPEAT_THRESHOLD,
     format_mention_user_ids_for_form,
     notify_loop_finished,
     parse_mention_user_ids,
@@ -56,6 +58,14 @@ from .notifier import (
 )
 from .paths import app_root, bundle_root, prepare_runtime
 from .preflight_diagnostics import PreflightReport, run_preflight
+from .settings_migration import (
+    format_migration_confirm_message,
+    format_migration_help_text,
+    format_migration_summary,
+    format_migration_summary_detail,
+    import_from_legacy_exe,
+    preview_legacy_import,
+)
 from .setup_wizard import SETUP_CAPTURE_VERSION, _place_dialog_near_parent, run_wizard_gui
 from .ui_positions import UiPositions
 
@@ -223,9 +233,9 @@ class LoginApp(tk.Tk):
         self.discord_notify_enabled_var = tk.BooleanVar(value=False)
         self.discord_webhook_var = tk.StringVar()
         self.discord_mention_users_var = tk.StringVar()
-        self.discord_stuck_repeat_var = tk.IntVar(value=0)
+        self.discord_stuck_repeat_var = tk.IntVar(value=DEFAULT_STUCK_REPEAT_THRESHOLD)
         self.discord_mention_everyone_var = tk.BooleanVar(value=False)
-        self.discord_attach_screenshot_var = tk.BooleanVar(value=False)
+        self.discord_attach_screenshot_var = tk.BooleanVar(value=DEFAULT_ATTACH_SCREENSHOT)
         self._capture_mode_trace_guard = False
         self._disk_capture_mode = DEFAULT_CAPTURE_MODE
 
@@ -314,7 +324,12 @@ class LoginApp(tk.Tk):
         style.configure("Dark.TSpinbox", **field_opts, arrowcolor=COLORS["text"])
         style.map("Dark.TSpinbox", fieldbackground=[("disabled", COLORS["surface"])])
 
-        style.configure("TCheckbutton", background=COLORS["surface"], foreground=COLORS["text"])
+        self._configure_checkbutton_style(style, "Dark.TCheckbutton", background=COLORS["surface"])
+        # 後方互換: 明示 style 未指定の Checkbutton も同じ見た目にする
+        self._configure_checkbutton_style(style, "TCheckbutton", background=COLORS["surface"])
+
+        style.configure("TScrollbar", background=COLORS["surface2"], troughcolor=COLORS["bg"], bordercolor=COLORS["bg"], arrowcolor=COLORS["text"])
+        style.map("TScrollbar", background=[("active", COLORS["border"])])
         style.configure("TButton", padding=(12, 6))
         style.configure("Accent.TButton", background=COLORS["accent"], foreground="white")
         style.map("Accent.TButton", background=[("active", COLORS["accent_hover"])])
@@ -322,6 +337,45 @@ class LoginApp(tk.Tk):
         style.configure("TNotebook", background=COLORS["bg"], borderwidth=0)
         style.configure("TNotebook.Tab", background=COLORS["surface"], foreground=COLORS["text"], padding=(10, 4))
         style.map("TNotebook.Tab", background=[("selected", COLORS["surface2"])])
+
+    def _configure_checkbutton_style(self, style: ttk.Style, name: str, *, background: str) -> None:
+        """clam テーマの Checkbutton がホバー時に白フラッシュするのを防ぐ。"""
+        surface2 = COLORS["surface2"]
+        style.configure(
+            name,
+            background=background,
+            foreground=COLORS["text"],
+            focuscolor=background,
+            bordercolor=background,
+            lightcolor=background,
+            darkcolor=background,
+        )
+        style.map(
+            name,
+            background=[
+                ("active", background),
+                ("selected", background),
+                ("!disabled", background),
+            ],
+            foreground=[
+                ("active", COLORS["text"]),
+                ("disabled", COLORS["text_dim"]),
+            ],
+            indicatorcolor=[
+                ("selected", COLORS["accent"]),
+                ("!selected", COLORS["text_dim"]),
+            ],
+            indicatorbackground=[
+                ("active", surface2),
+                ("!active", surface2),
+                ("selected", surface2),
+                ("!selected", surface2),
+            ],
+            focuscolor=[
+                ("focus", background),
+                ("!focus", background),
+            ],
+        )
 
     def _init_timing_vars(self) -> None:
         for field in RETRY_TIMING_FIELDS:
@@ -570,6 +624,24 @@ class LoginApp(tk.Tk):
         ).pack(side=tk.LEFT, padx=(0, 4))
         ttk.Label(retry_row, text="秒", style="CardDim.TLabel", font=("Segoe UI", 8)).pack(side=tk.LEFT)
 
+        migrate_card = self._card(scroll_body, "旧版から引き継ぎ", compact=True)
+        self._migration_help_label = tk.Label(
+            migrate_card,
+            text=format_migration_help_text(),
+            fg=COLORS["text_dim"],
+            bg=COLORS["surface"],
+            font=("Segoe UI", 9),
+            justify=tk.LEFT,
+            anchor=tk.W,
+            wraplength=560,
+        )
+        self._migration_help_label.pack(fill=tk.X, anchor=tk.W, pady=(0, 6))
+        ttk.Button(
+            migrate_card,
+            text="旧版 exe を指定して引き継ぐ…",
+            command=self._on_import_legacy_settings,
+        ).pack(anchor=tk.W)
+
     def _build_discord_tab(self, parent: ttk.Frame) -> None:
         scroll_body = self._build_scrollable_tab(parent)
 
@@ -591,6 +663,7 @@ class LoginApp(tk.Tk):
             overview,
             text="Discord 通知を有効にする",
             variable=self.discord_notify_enabled_var,
+            style="Dark.TCheckbutton",
         ).pack(anchor=tk.W, pady=(0, 8))
 
         url_row = ttk.Frame(overview, style="Card.TFrame")
@@ -632,13 +705,13 @@ class LoginApp(tk.Tk):
             mention_body,
             text="@everyone をメンションする",
             variable=self.discord_mention_everyone_var,
-            style="TCheckbutton",
+            style="Dark.TCheckbutton",
         ).pack(anchor=tk.W, pady=(6, 0))
         ttk.Checkbutton(
             mention_body,
             text="通知時にゲーム画面のスクショを添付する",
             variable=self.discord_attach_screenshot_var,
-            style="TCheckbutton",
+            style="Dark.TCheckbutton",
         ).pack(anchor=tk.W, pady=(4, 0))
 
         stuck_row = ttk.Frame(overview, style="Card.TFrame")
@@ -704,6 +777,20 @@ class LoginApp(tk.Tk):
         else:
             messagebox.showerror("Discord 通知", message, parent=self)
             self._append_log(message, CHANNEL_DETAIL)
+
+    @staticmethod
+    def _text_display_width(text: str) -> int:
+        """tk Menubutton の width（半角単位）の目安。"""
+        width = 0
+        for ch in text:
+            width += 2 if ord(ch) > 0xFF else 1
+        return width
+
+    @classmethod
+    def _option_menu_width(cls, *labels: str, padding: int = 2) -> int:
+        if not labels:
+            return 24
+        return max(cls._text_display_width(label) for label in labels) + padding
 
     def _style_option_menu(self, menu: tk.OptionMenu, *, width: int) -> None:
         menu.configure(
@@ -871,7 +958,7 @@ class LoginApp(tk.Tk):
             mods_card,
             text="② REQUIRED MODS をスキップ（① の直後に ③ ログイン待機へ）",
             variable=self.skip_required_mods_var,
-            style="TCheckbutton",
+            style="Dark.TCheckbutton",
         ).pack(anchor=tk.W, pady=(6, 0))
         ttk.Label(
             mods_card,
@@ -900,13 +987,13 @@ class LoginApp(tk.Tk):
             flags_row,
             text="操作前に ARK を前面に出す",
             variable=self.bring_to_front_var,
-            style="TCheckbutton",
+            style="Dark.TCheckbutton",
         ).pack(side=tk.LEFT, padx=(0, 16))
         ttk.Checkbutton(
             flags_row,
             text="クリック位置を表示",
             variable=self.show_click_indicator_var,
-            style="TCheckbutton",
+            style="Dark.TCheckbutton",
         ).pack(side=tk.LEFT)
         ttk.Button(
             flags_row,
@@ -918,16 +1005,17 @@ class LoginApp(tk.Tk):
         scroll_body = self._build_scrollable_tab(parent)
 
         mode_card = self._card(scroll_body, "クリック方式", compact=True)
-        mode_row = ttk.Frame(mode_card, style="Card.TFrame")
-        mode_row.pack(fill=tk.X)
-        ttk.Label(mode_row, text="モード", style="Card.TLabel", width=10).pack(side=tk.LEFT)
+        ttk.Label(mode_card, text="モード", style="Card.TLabel", font=("Segoe UI", 9)).pack(anchor=tk.W)
         click_menu = tk.OptionMenu(
-            mode_row,
+            mode_card,
             self.click_mode_var,
             *[label for _value, label in CLICK_MODE_OPTIONS],
         )
-        self._style_option_menu(click_menu, width=42)
-        click_menu.pack(side=tk.LEFT)
+        self._style_option_menu(
+            click_menu,
+            width=self._option_menu_width(*(label for _value, label in CLICK_MODE_OPTIONS)),
+        )
+        click_menu.pack(anchor=tk.W, fill=tk.X, pady=(4, 0))
 
         coord_card = self._card(scroll_body, "クリック座標（％）", compact=True)
         grid = ttk.Frame(coord_card, style="Card.TFrame")
@@ -1135,11 +1223,15 @@ class LoginApp(tk.Tk):
         mention_ids = parse_mention_user_ids(discord.get("mention_user_ids"))
         self.discord_mention_users_var.set(format_mention_user_ids_for_form(mention_ids))
         self.discord_mention_everyone_var.set(bool(discord.get("mention_everyone", False)))
-        self.discord_attach_screenshot_var.set(bool(discord.get("attach_screenshot", False)))
+        self.discord_attach_screenshot_var.set(
+            bool(discord.get("attach_screenshot", DEFAULT_ATTACH_SCREENSHOT)),
+        )
         try:
-            self.discord_stuck_repeat_var.set(max(0, int(discord.get("stuck_repeat_threshold", 0))))
+            self.discord_stuck_repeat_var.set(
+                max(0, int(discord.get("stuck_repeat_threshold", DEFAULT_STUCK_REPEAT_THRESHOLD))),
+            )
         except (TypeError, ValueError):
-            self.discord_stuck_repeat_var.set(0)
+            self.discord_stuck_repeat_var.set(DEFAULT_STUCK_REPEAT_THRESHOLD)
 
     def _collect_notifications(self) -> dict:
         return {
@@ -1575,6 +1667,59 @@ class LoginApp(tk.Tk):
             )
         except Exception as exc:
             messagebox.showerror("エラー", f"初期値への復元に失敗しました:\n{exc}", parent=self)
+
+    def _on_import_legacy_settings(self) -> None:
+        if self._running:
+            messagebox.showwarning(
+                "旧版から引き継ぎ",
+                "自動ログイン実行中は引き継ぎできません。",
+                parent=self,
+            )
+            return
+
+        if self._has_unsaved_changes():
+            proceed = messagebox.askyesno(
+                "旧版から引き継ぎ",
+                "未保存の設定があります。\n"
+                "引き継ぎを実行すると、ディスク上の config.yaml が上書きされ、"
+                "フォームの未保存内容は失われます。\n\n続行しますか？",
+                parent=self,
+            )
+            if not proceed:
+                return
+
+        exe_path = filedialog.askopenfilename(
+            title="旧版 ASA_Login.exe を選択",
+            filetypes=[("実行ファイル", "*.exe"), ("すべて", "*.*")],
+        )
+        if not exe_path:
+            return
+
+        try:
+            preview = preview_legacy_import(exe_path)
+        except (FileNotFoundError, ValueError) as exc:
+            messagebox.showerror("旧版から引き継ぎ", str(exc), parent=self)
+            return
+
+        if not messagebox.askyesno(
+            "旧版から引き継ぎ",
+            format_migration_confirm_message(preview),
+            parent=self,
+        ):
+            return
+
+        try:
+            result = import_from_legacy_exe(exe_path)
+            self._apply_config_to_form(load_config())
+            self._mark_config_saved()
+            self._refresh_chrome()
+            summary = format_migration_summary(result)
+            self._append_log("旧版から引き継ぎました")
+            self._append_log(summary)
+            self._append_log(format_migration_summary_detail(result), CHANNEL_DETAIL)
+            messagebox.showinfo("引き継ぎ完了", summary, parent=self)
+        except Exception as exc:
+            messagebox.showerror("旧版から引き継ぎ", f"引き継ぎに失敗しました:\n{exc}", parent=self)
 
     def _config_snapshot(self, config: dict) -> str:
         return json.dumps(config, sort_keys=True, ensure_ascii=False, default=str)

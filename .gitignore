@@ -11,6 +11,7 @@ release/
 
 # ユーザー環境
 config.yaml
+config.yaml.bak
 templates/*.png
 templates/buttons/
 logs/*.log
