@@ -479,7 +479,7 @@ class SetupIntroDialog(tk.Toplevel):
         for step in SETUP_STEPS:
             registered = _step_registered(step)
             suffix = " — 登録済み" if registered else ""
-            var = tk.BooleanVar(value=step.name == "server_list")
+            var = tk.BooleanVar(value=False)
             self._step_vars[step.name] = var
             cb = tk.Checkbutton(
                 list_frame,

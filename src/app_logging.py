@@ -174,13 +174,16 @@ def setup_logging(config: dict | None = None, log_queue: queue.Queue | None = No
 
 def log_runtime_config_detail(config: dict | None, *, runtime: dict[str, Any] | None = None) -> None:
     """実行開始時の設定値を詳細ログへすべて書き出す"""
+    from .notifier import redact_notifications_for_log
+
     config = config or {}
     runtime = runtime or {}
+    log_config = redact_notifications_for_log(config)
 
     detail_log.info("=== 実行時設定（config.yaml 相当） ===")
-    if config:
+    if log_config:
         dumped = yaml.dump(
-            config,
+            log_config,
             allow_unicode=True,
             default_flow_style=False,
             sort_keys=False,
@@ -295,6 +298,7 @@ def build_runtime_config_snapshot(
             "click_mode",
             "mods_detect_mode",
             "mods_screen_region",
+            "skip_required_mods",
             "screen_threshold",
             "mods_screen_threshold",
             "button_threshold",

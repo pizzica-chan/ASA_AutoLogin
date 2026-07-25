@@ -6,6 +6,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from src.gui_app import LoginApp
+from src.login_flow import LoginState, LoginStats
 
 
 def _make_login_app_stub(*, viewable: bool = True) -> LoginApp:
@@ -28,6 +29,7 @@ def _make_login_app_stub(*, viewable: bool = True) -> LoginApp:
     app._worker = None
     app._automator = None
     app._start_config = {}
+    app._log_queue = MagicMock()
     return app
 
 
@@ -230,6 +232,120 @@ class ConfirmEnvironmentPreflightTests(unittest.TestCase):
             self.assertTrue(app._confirm_environment_preflight())
         self.assertIsNone(app._preflight_cache)
         mock_run.assert_called_once_with({"display": {}}, use_cache=False)
+
+
+class RunWorkerNotificationTests(unittest.TestCase):
+    @patch("src.gui_app.teardown_logging")
+    @patch("src.gui_app.setup_logging")
+    @patch("src.gui_app.notify_loop_finished")
+    def test_run_worker_skips_notify_when_cancelled_during_countdown(
+        self,
+        mock_notify: MagicMock,
+        _setup: MagicMock,
+        _teardown: MagicMock,
+    ) -> None:
+        app = _make_login_app_stub()
+        app._start_config = {"retry": {"start_countdown_seconds": 3}}
+        app._running = True
+
+        def stop_on_sleep(_seconds: float) -> None:
+            app._running = False
+
+        with patch("src.gui_app.time.sleep", side_effect=stop_on_sleep):
+            app._run_worker()
+
+        mock_notify.assert_not_called()
+        app._log_queue.put.assert_called_with(("done", None))
+
+    @patch("src.gui_app.teardown_logging")
+    @patch("src.gui_app.setup_logging")
+    @patch("src.notifier.send_discord_webhook_async")
+    def test_run_worker_stopped_does_not_send_discord(
+        self,
+        mock_send: MagicMock,
+        _setup: MagicMock,
+        _teardown: MagicMock,
+    ) -> None:
+        app = _make_login_app_stub()
+        app._start_config = {
+            "retry": {"start_countdown_seconds": 0},
+            "notifications": {
+                "discord": {
+                    "enabled": True,
+                    "webhook_url": "https://discord.com/api/webhooks/1/abc",
+                },
+            },
+        }
+        app._running = True
+        automator = MagicMock()
+        automator.run.return_value = LoginState.STOPPED
+        automator.stats = LoginStats()
+        automator.vision = MagicMock()
+        app._automator = automator
+
+        app._run_worker()
+
+        mock_send.assert_not_called()
+
+    @patch("src.gui_app.teardown_logging")
+    @patch("src.gui_app.setup_logging")
+    @patch("src.notifier.send_discord_webhook_async")
+    def test_run_worker_success_sends_discord(
+        self,
+        mock_send: MagicMock,
+        _setup: MagicMock,
+        _teardown: MagicMock,
+    ) -> None:
+        app = _make_login_app_stub()
+        app._start_config = {
+            "retry": {"start_countdown_seconds": 0},
+            "notifications": {
+                "discord": {
+                    "enabled": True,
+                    "webhook_url": "https://discord.com/api/webhooks/1/abc",
+                },
+            },
+        }
+        app._running = True
+        automator = MagicMock()
+        automator.run.return_value = LoginState.SUCCESS
+        automator.stats = LoginStats(attempts=2)
+        automator.vision = MagicMock()
+        app._automator = automator
+
+        app._run_worker()
+
+        mock_send.assert_called_once()
+
+    @patch("src.gui_app.teardown_logging")
+    @patch("src.gui_app.setup_logging")
+    @patch("src.notifier.send_discord_webhook_async")
+    def test_run_worker_error_sends_discord(
+        self,
+        mock_send: MagicMock,
+        _setup: MagicMock,
+        _teardown: MagicMock,
+    ) -> None:
+        app = _make_login_app_stub()
+        app._start_config = {
+            "retry": {"start_countdown_seconds": 0},
+            "notifications": {
+                "discord": {
+                    "enabled": True,
+                    "webhook_url": "https://discord.com/api/webhooks/1/abc",
+                },
+            },
+        }
+        app._running = True
+        automator = MagicMock()
+        automator.run.side_effect = RuntimeError("boom")
+        automator.stats = LoginStats()
+        automator.vision = MagicMock()
+        app._automator = automator
+
+        app._run_worker()
+
+        mock_send.assert_called_once()
 
 
 if __name__ == "__main__":

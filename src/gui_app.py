@@ -47,6 +47,13 @@ from .capture import CaptureSettings, DEFAULT_CAPTURE_MODE, WindowNotFoundError,
 from .coordinate_preview import pick_coordinate_on_screen, show_coordinate_preview
 from .display import list_monitors
 from .login_flow import LoginState
+from .notifier import (
+    format_mention_user_ids_for_form,
+    notify_loop_finished,
+    parse_mention_user_ids,
+    send_discord_test,
+    validate_webhook_url,
+)
 from .paths import app_root, bundle_root, prepare_runtime
 from .preflight_diagnostics import PreflightReport, run_preflight
 from .setup_wizard import SETUP_CAPTURE_VERSION, _place_dialog_near_parent, run_wizard_gui
@@ -208,10 +215,17 @@ class LoginApp(tk.Tk):
         self.click_mode_var = tk.StringVar(value=CLICK_MODE_OPTIONS[0][1])
         self.mods_detect_mode_var = tk.StringVar(value=MODS_DETECT_MODE_OPTIONS[0][1])
         self.mods_screen_region_var = tk.StringVar(value=MODS_SCREEN_REGION_OPTIONS[0][1])
+        self.skip_required_mods_var = tk.BooleanVar(value=False)
         self.capture_mode_var = tk.StringVar(value=CAPTURE_MODE_OPTIONS[0][1])
         self.window_title_var = tk.StringVar()
         self.bring_to_front_var = tk.BooleanVar(value=True)
         self.show_click_indicator_var = tk.BooleanVar(value=True)
+        self.discord_notify_enabled_var = tk.BooleanVar(value=False)
+        self.discord_webhook_var = tk.StringVar()
+        self.discord_mention_users_var = tk.StringVar()
+        self.discord_stuck_repeat_var = tk.IntVar(value=0)
+        self.discord_mention_everyone_var = tk.BooleanVar(value=False)
+        self.discord_attach_screenshot_var = tk.BooleanVar(value=False)
         self._capture_mode_trace_guard = False
         self._disk_capture_mode = DEFAULT_CAPTURE_MODE
 
@@ -406,15 +420,18 @@ class LoginApp(tk.Tk):
         tab_timing = ttk.Frame(notebook, padding=2)
         tab_matching = ttk.Frame(notebook, padding=2)
         tab_coordinates = ttk.Frame(notebook, padding=2)
+        tab_discord = ttk.Frame(notebook, padding=2)
         notebook.add(tab_main, text="メイン")
         notebook.add(tab_timing, text="待ち時間")
         notebook.add(tab_matching, text="画像認識")
         notebook.add(tab_coordinates, text="クリック座標")
+        notebook.add(tab_discord, text="Discord 通知")
 
         self._build_main_tab(tab_main)
         self._build_timing_tab(tab_timing)
         self._build_matching_tab(tab_matching)
         self._build_coordinates_tab(tab_coordinates)
+        self._build_discord_tab(tab_discord)
 
         log_header = ttk.Frame(log_host)
         log_header.pack(fill=tk.X, pady=(0, 4))
@@ -552,6 +569,141 @@ class LoginApp(tk.Tk):
             font=("Segoe UI", 9),
         ).pack(side=tk.LEFT, padx=(0, 4))
         ttk.Label(retry_row, text="秒", style="CardDim.TLabel", font=("Segoe UI", 8)).pack(side=tk.LEFT)
+
+    def _build_discord_tab(self, parent: ttk.Frame) -> None:
+        scroll_body = self._build_scrollable_tab(parent)
+
+        overview = self._card(scroll_body, "Discord 通知（任意）", compact=True)
+        ttk.Label(
+            overview,
+            text=(
+                "自動ログインのループが終了したとき（成功・失敗・エラー）に、"
+                "Discord チャンネルへメッセージを送ります。\n"
+                "Webhook URL は Discord のチャンネル設定 → 連携サービス → Webhook から取得してください。"
+            ),
+            style="CardDim.TLabel",
+            wraplength=560,
+            justify=tk.LEFT,
+            font=("Segoe UI", 9),
+        ).pack(anchor=tk.W, pady=(0, 8))
+
+        ttk.Checkbutton(
+            overview,
+            text="Discord 通知を有効にする",
+            variable=self.discord_notify_enabled_var,
+        ).pack(anchor=tk.W, pady=(0, 8))
+
+        url_row = ttk.Frame(overview, style="Card.TFrame")
+        url_row.pack(fill=tk.X, pady=(0, 4))
+        ttk.Label(url_row, text="Webhook URL", style="Card.TLabel", width=12).pack(side=tk.LEFT, anchor=tk.N)
+        self.discord_webhook_entry = ttk.Entry(
+            url_row,
+            textvariable=self.discord_webhook_var,
+            style="Dark.TEntry",
+            font=("Segoe UI", 9),
+        )
+        self.discord_webhook_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        mention_row = ttk.Frame(overview, style="Card.TFrame")
+        mention_row.pack(fill=tk.X, pady=(8, 4))
+        ttk.Label(mention_row, text="メンション", style="Card.TLabel", width=12).pack(side=tk.LEFT, anchor=tk.N)
+        mention_body = ttk.Frame(mention_row, style="Card.TFrame")
+        mention_body.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        ttk.Entry(
+            mention_body,
+            textvariable=self.discord_mention_users_var,
+            style="Dark.TEntry",
+            font=("Segoe UI", 9),
+        ).pack(fill=tk.X)
+        ttk.Label(
+            mention_body,
+            text=(
+                "通知時にメンションする Discord ユーザー ID（カンマ区切り、任意）。"
+                "ユーザー設定 → 詳細設定 → 開発者モード を ON にし、"
+                "ユーザー名を右クリック → ID をコピー"
+            ),
+            style="CardDim.TLabel",
+            wraplength=520,
+            justify=tk.LEFT,
+            font=("Segoe UI", 8),
+        ).pack(anchor=tk.W, pady=(4, 0))
+
+        ttk.Checkbutton(
+            mention_body,
+            text="@everyone をメンションする",
+            variable=self.discord_mention_everyone_var,
+            style="TCheckbutton",
+        ).pack(anchor=tk.W, pady=(6, 0))
+        ttk.Checkbutton(
+            mention_body,
+            text="通知時にゲーム画面のスクショを添付する",
+            variable=self.discord_attach_screenshot_var,
+            style="TCheckbutton",
+        ).pack(anchor=tk.W, pady=(4, 0))
+
+        stuck_row = ttk.Frame(overview, style="Card.TFrame")
+        stuck_row.pack(fill=tk.X, pady=(8, 0))
+        ttk.Label(stuck_row, text="停滞通知", style="Card.TLabel", width=12).pack(side=tk.LEFT)
+        stuck_body = ttk.Frame(stuck_row, style="Card.TFrame")
+        stuck_body.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        stuck_input = ttk.Frame(stuck_body, style="Card.TFrame")
+        stuck_input.pack(fill=tk.X)
+        ttk.Spinbox(
+            stuck_input,
+            from_=0,
+            to=999,
+            textvariable=self.discord_stuck_repeat_var,
+            width=6,
+            style="Dark.TSpinbox",
+            font=("Segoe UI", 9),
+        ).pack(side=tk.LEFT, padx=(0, 6))
+        ttk.Label(
+            stuck_input,
+            text="回連続で同じフェーズが進まないとき通知（0=無効）",
+            style="CardDim.TLabel",
+            font=("Segoe UI", 8),
+        ).pack(side=tk.LEFT)
+        ttk.Label(
+            stuck_body,
+            text="例: ① に戻れない状態が続く、⑥ からの復帰に失敗し続ける、など",
+            style="CardDim.TLabel",
+            wraplength=520,
+            justify=tk.LEFT,
+            font=("Segoe UI", 8),
+        ).pack(anchor=tk.W, pady=(4, 0))
+
+        btn_row = ttk.Frame(overview, style="Card.TFrame")
+        btn_row.pack(fill=tk.X, pady=(8, 0))
+        ttk.Button(btn_row, text="テスト送信", command=self._on_discord_test).pack(side=tk.LEFT)
+
+        ttk.Label(
+            scroll_body,
+            text="※ Webhook URL は config.yaml に保存されます。他人に見せないでください。",
+            style="Dim.TLabel",
+            wraplength=560,
+            justify=tk.LEFT,
+            font=("Segoe UI", 8),
+        ).pack(anchor=tk.W, pady=(4, 0))
+
+    def _on_discord_test(self) -> None:
+        url = self.discord_webhook_var.get().strip()
+        validation = validate_webhook_url(url)
+        if validation:
+            messagebox.showwarning("Discord 通知", validation, parent=self)
+            return
+        ok, message = send_discord_test(
+            url,
+            mention_user_ids=parse_mention_user_ids(self.discord_mention_users_var.get()),
+            mention_everyone=bool(self.discord_mention_everyone_var.get()),
+            attach_screenshot=bool(self.discord_attach_screenshot_var.get()),
+            config=self._get_form_config(),
+        )
+        if ok:
+            messagebox.showinfo("Discord 通知", message, parent=self)
+            self._append_log(message)
+        else:
+            messagebox.showerror("Discord 通知", message, parent=self)
+            self._append_log(message, CHANNEL_DETAIL)
 
     def _style_option_menu(self, menu: tk.OptionMenu, *, width: int) -> None:
         menu.configure(
@@ -715,6 +867,20 @@ class LoginApp(tk.Tk):
             MODS_SCREEN_REGION_OPTIONS,
             menu_width=24,
         )
+        ttk.Checkbutton(
+            mods_card,
+            text="② REQUIRED MODS をスキップ（① の直後に ③ ログイン待機へ）",
+            variable=self.skip_required_mods_var,
+            style="TCheckbutton",
+        ).pack(anchor=tk.W, pady=(6, 0))
+        ttk.Label(
+            mods_card,
+            text="MODS 不要のサーバー向け。有効にすると MODS 画面の検出・JOIN を行いません。",
+            style="CardDim.TLabel",
+            wraplength=560,
+            justify=tk.LEFT,
+            font=("Segoe UI", 8),
+        ).pack(anchor=tk.W, pady=(4, 0))
 
         window_card = self._card(scroll_body, "ウィンドウ", compact=True)
         title_row = ttk.Frame(window_card, style="Card.TFrame")
@@ -950,6 +1116,7 @@ class LoginApp(tk.Tk):
         self.mods_screen_region_var.set(
             MODS_SCREEN_REGION_VALUE_TO_LABEL.get(mods_screen_region, MODS_SCREEN_REGION_OPTIONS[0][1])
         )
+        self.skip_required_mods_var.set(bool(matching.get("skip_required_mods", False)))
 
         self.window_title_var.set(window.get("title_contains", "ARK: Survival Ascended"))
         self.bring_to_front_var.set(bool(window.get("bring_to_front", True)))
@@ -960,6 +1127,31 @@ class LoginApp(tk.Tk):
             x_var, y_var = self._ui_coord_vars[field.key]
             x_var.set(float(entry.get("x_percent", field.default_x)))
             y_var.set(float(entry.get("y_percent", field.default_y)))
+
+        notifications = self._config.get("notifications", {})
+        discord = notifications.get("discord", {}) if isinstance(notifications, dict) else {}
+        self.discord_notify_enabled_var.set(bool(discord.get("enabled", False)))
+        self.discord_webhook_var.set(str(discord.get("webhook_url") or ""))
+        mention_ids = parse_mention_user_ids(discord.get("mention_user_ids"))
+        self.discord_mention_users_var.set(format_mention_user_ids_for_form(mention_ids))
+        self.discord_mention_everyone_var.set(bool(discord.get("mention_everyone", False)))
+        self.discord_attach_screenshot_var.set(bool(discord.get("attach_screenshot", False)))
+        try:
+            self.discord_stuck_repeat_var.set(max(0, int(discord.get("stuck_repeat_threshold", 0))))
+        except (TypeError, ValueError):
+            self.discord_stuck_repeat_var.set(0)
+
+    def _collect_notifications(self) -> dict:
+        return {
+            "discord": {
+                "enabled": bool(self.discord_notify_enabled_var.get()),
+                "webhook_url": self.discord_webhook_var.get().strip(),
+                "mention_user_ids": list(parse_mention_user_ids(self.discord_mention_users_var.get())),
+                "mention_everyone": bool(self.discord_mention_everyone_var.get()),
+                "attach_screenshot": bool(self.discord_attach_screenshot_var.get()),
+                "stuck_repeat_threshold": max(0, int(self.discord_stuck_repeat_var.get())),
+            },
+        }
 
     def _has_setup_templates(self) -> bool:
         return (app_root() / "templates" / "server_list.png").exists()
@@ -1458,6 +1650,7 @@ class LoginApp(tk.Tk):
             mods_region_label,
             "center",
         )
+        matching["skip_required_mods"] = bool(self.skip_required_mods_var.get())
         return matching
 
     def _collect_window(self) -> dict[str, str | bool]:
@@ -1479,7 +1672,7 @@ class LoginApp(tk.Tk):
 
     def _get_form_config(self) -> dict:
         capture_label = self.capture_mode_var.get()
-        return apply_ui_overrides(
+        config = apply_ui_overrides(
             self._config,
             max_attempts=int(self.max_attempts_var.get()),
             delay_seconds=float(self.delay_var.get()),
@@ -1491,6 +1684,8 @@ class LoginApp(tk.Tk):
             window_overrides=self._collect_window(),
             ui_overrides=self._collect_ui_coords(),
         )
+        config["notifications"] = self._collect_notifications()
+        return config
 
     def _on_save(self) -> None:
         try:
@@ -1607,6 +1802,9 @@ class LoginApp(tk.Tk):
 
     def _run_worker(self) -> None:
         setup_logging(self._start_config, self._log_queue)
+        loop_ran = False
+        result: LoginState | None = None
+        error_msg: str | None = None
         try:
             countdown = max(0, int(self._start_config.get("retry", {}).get("start_countdown_seconds", 3)))
             for i in range(countdown, 0, -1):
@@ -1618,21 +1816,35 @@ class LoginApp(tk.Tk):
             if not self._running:
                 return
 
+            loop_ran = True
             result = self._automator.run()
             self._log_queue.put(("result", result))
         except WindowNotFoundError as exc:
             from .app_logging import detail_log
 
+            loop_ran = True
+            error_msg = str(exc)
             detail_log.error("ARK ウィンドウが見つかりません: %s", exc)
             user_log.error("ARK ウィンドウが見つかりません")
             self._log_queue.put(("error", str(exc)))
         except Exception as exc:
             from .app_logging import detail_log
 
+            loop_ran = True
+            error_msg = str(exc)
             detail_log.exception("実行中にエラーが発生しました")
             user_log.error("エラーが発生しました: %s", exc)
             self._log_queue.put(("error", str(exc)))
         finally:
+            if loop_ran:
+                stats = self._automator.stats if self._automator else None
+                notify_loop_finished(
+                    self._start_config,
+                    result=result,
+                    stats=stats,
+                    error=error_msg,
+                    vision=self._automator.vision if self._automator else None,
+                )
             teardown_logging(close_files=False)
             self._log_queue.put(("done", None))
 

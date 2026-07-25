@@ -61,6 +61,7 @@ ARK: Survival Ascended のサーバー参加を自動化する際の画面遷移
 | **クリック位置** | `ui.join_mods` |
 | **待機時間** | ① JOIN 後最大 `mods_wait_seconds`（デフォルト 8 秒）で画面出現を監視 |
 | **検出方式** | `matching.mods_detect_mode`（`hybrid` / `screen` / `button`、デフォルト `hybrid`）。`hybrid` では画面類似度（中央モーダル領域）と `join_mods` ボタン PNG のいずれかで判定 |
+| **スキップ** | `matching.skip_required_mods: true` のとき ② を省略し、① の直後に ③ へ進む（MODS 不要サーバー向け） |
 
 **補足:** 一覧画面右下の JOIN（①）とは別ボタンです。
 
@@ -214,12 +215,53 @@ GUI を起動して **「セットアップ」** ボタンを押す（`python gu
 - **解像度変更:** テンプレートとクリック位置の再セットアップが必要
 - **操作時:** ARK ウィンドウが一瞬前面に出る（完全バックグラウンド動作ではない）
 
+## Discord 通知（任意）
+
+`notifications.discord` で Discord Webhook による外部通知を有効化できます（GUI「Discord 通知」タブ）。
+
+### 終了時通知
+
+ループが終了したときにメッセージを送ります。
+
+| 結果 | 通知 |
+|------|------|
+| 成功（`LoginState.SUCCESS`） | 送る |
+| 失敗（リトライ上限・開始前チェック失敗） | 送る |
+| エラー（ウィンドウ喪失など） | 送る |
+| **手動停止（停止ボタン等）** | **送らない** |
+| カウントダウン中のキャンセル | 送らない |
+
+### 停滞通知
+
+`stuck_repeat_threshold`（デフォルト `0` = 無効）を正の整数にすると、同じフェーズが **n 回連続** で進まないときに追加通知します。1 エピソードにつき 1 回のみ（同じ停滞の連続通知は抑制）。
+
+| phase_key | 意味 |
+|-----------|------|
+| `step1_not_ready` | ① サーバー一覧に到達できない |
+| `step1_join_failed` | ① JOIN に失敗 |
+| `step2_mods_stuck` | ② MODS 画面が残存 |
+| `recovery_connection_failed` | ③-A からの復帰失敗 |
+| `recovery_network_failed` | ⑥ からの復帰失敗 |
+| `black_frame` | 黒画面のため操作不可 |
+| `focus_failed` | ARK を前面にできない |
+| `window_lost` | ARK ウィンドウを確認できない |
+
+Server full 等で ③-A / ⑥ から正常復帰した試行は停滞カウントに含めません。
+
+### その他
+
+- `attach_screenshot: true` … 通知時にキャプチャ領域の PNG を添付（黒画面・取得失敗時はテキストのみ）
+- `mention_user_ids` / `mention_everyone` … メンション指定
+- 通知送信は別スレッド（ログインループをブロックしない）
+- Webhook URL は詳細ログ出力時に `***` でマスク
+
 ## 関連ファイル（実装）
 
 | ファイル | 役割 |
 |---------|------|
 | `src/button_templates.py` | ボタン画像の管理 |
 | `src/login_flow.py` | ①〜⑦ の状態機械・リトライ制御 |
+| `src/notifier.py` | Discord Webhook 通知 |
 | `src/vision.py` | 画面キャプチャ・類似度判定 |
 | `src/ui_positions.py` | クリック座標（パーセント → 絶対座標） |
 | `src/setup_wizard.py` | テンプレート・座標の登録 |

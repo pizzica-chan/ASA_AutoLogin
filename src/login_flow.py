@@ -92,6 +92,7 @@ class TemplateConfig:
     mods_screen_threshold: float = 0.55
     mods_detect_mode: str = "hybrid"  # hybrid | screen | button
     mods_screen_region: str = "center"  # center | full
+    skip_required_mods: bool = False  # True なら ② を省略して ③ へ
     screen_ready_margin: float = 0.05
     click_mode: str = "image"  # image | image_only | coordinates | coordinates_only
 
@@ -135,6 +136,9 @@ class LoginAutomator:
         self._stats = LoginStats()
         self._running = False
         self._stop_event = threading.Event()
+        self._last_stuck_phase_key: str | None = None
+        self._stuck_phase_count = 0
+        self._stuck_phase_notified = False
 
     @property
     def state(self) -> LoginState:
@@ -166,6 +170,58 @@ class LoginAutomator:
         user_log.info("自動ログインを停止しました")
         detail_log.info("自動ログインを停止しました")
         return LoginState.STOPPED
+
+    def _reset_stuck_tracking(self) -> None:
+        self._last_stuck_phase_key = None
+        self._stuck_phase_count = 0
+        self._stuck_phase_notified = False
+
+    def _record_stuck_phase(self, phase_key: str) -> None:
+        if self._stop_event.is_set():
+            return
+        from .notifier import (
+            STUCK_PHASE_LABELS,
+            notify_stuck_phase_repeated,
+            parse_discord_notification_config,
+        )
+
+        if phase_key == self._last_stuck_phase_key:
+            self._stuck_phase_count += 1
+        else:
+            self._last_stuck_phase_key = phase_key
+            self._stuck_phase_count = 1
+            self._stuck_phase_notified = False
+
+        threshold = parse_discord_notification_config(self.config).stuck_repeat_threshold
+        if threshold <= 0 or self._stuck_phase_count < threshold or self._stuck_phase_notified:
+            return
+
+        label = STUCK_PHASE_LABELS.get(phase_key, phase_key)
+        user_log.warning(
+            "同じ状態が %d 回続いています（%s）。Discord へ通知します",
+            self._stuck_phase_count,
+            label,
+        )
+        detail_log.warning(
+            "停滞通知: phase=%s, count=%d, threshold=%d",
+            phase_key,
+            self._stuck_phase_count,
+            threshold,
+        )
+        notify_stuck_phase_repeated(
+            self.config,
+            phase_key=phase_key,
+            repeat_count=self._stuck_phase_count,
+            stats=self._stats,
+            vision=self.vision,
+        )
+        self._stuck_phase_notified = True
+
+    def _handle_attempt_retry(self) -> None:
+        if self._last_stuck_phase_key:
+            self._record_stuck_phase(self._last_stuck_phase_key)
+        else:
+            self._reset_stuck_tracking()
 
     def _is_coordinates_only(self) -> bool:
         return self.click_mode == "coordinates_only"
@@ -606,6 +662,13 @@ class LoginAutomator:
             if not self._return_to_server_list_via_main_menu():
                 return False
 
+        if self._try_recover_from_title_screen():
+            ready, score = self._is_server_list_ready()
+            if ready:
+                user_log.info("サーバー一覧の準備ができています")
+                detail_log.info("① サーバー一覧の状態を確認しました (類似度: %.2f)", score)
+                return True
+
         ready, score = self._is_server_list_ready()
         if ready:
             user_log.info("サーバー一覧の準備ができています")
@@ -1042,6 +1105,11 @@ class LoginAutomator:
 
     def _step2_maybe_join_mods(self) -> bool:
         """② REQUIRED MODS（表示時のみ JOIN）"""
+        if self.templates.skip_required_mods:
+            user_log.info("② MODS 画面をスキップします（設定）")
+            detail_log.info("skip_required_mods が有効のため ② を省略し ③ へ進みます")
+            return True
+
         if self._is_coordinates_only():
             has_mods_button = self.ui.has_point("join_mods")
         else:
@@ -1235,13 +1303,47 @@ class LoginAutomator:
         detail_log.info("リカバリー完了。① の状態に戻りました")
         return True
 
+    def _wait_for_network_failure_dismissed(self, timeout: float) -> bool:
+        """⑥ のダイアログが消えるまで待つ（⑦ へ進む前の待機）"""
+
+        def predicate() -> bool:
+            return not self._has_network_failure_dialog()
+
+        return self._wait_for_stable(
+            timeout,
+            predicate,
+            success_log="⑥ ダイアログが消えました",
+            failure_log="⑥ ダイアログの消失待ちがタイムアウトしました（Space を試行します）",
+        )
+
     def _wait_for_title_screen(self, timeout: float) -> bool:
         """⑦ タイトル画面（⑥ のダイアログ消去後）を待つ"""
         if resolve_screen_path("title_screen", self.templates.title_screen):
             return self._wait_for_screen("title_screen", timeout)
-        user_log.warning("タイトル画面の画像がないため、安全のため Space キーを送りません")
-        detail_log.warning("title_screen テンプレート未設定。ダイアログ消失だけでは⑦と判定しません")
-        return False
+
+        user_log.info("⑦ タイトル画面の画像は未設定です。⑥ ダイアログ消失後に Space を試します")
+        detail_log.info("title_screen 未設定。⑥ ダイアログ消失待ち後に Space を送ります")
+        self._wait_for_network_failure_dismissed(timeout)
+        return True
+
+    def _try_recover_from_title_screen(self) -> bool:
+        """⑦ 相当の画面に取り残されたとき、Space → ⑤ → ① を試す"""
+        if self._has_connection_failed_dialog() or self._has_network_failure_dialog():
+            return False
+        if self._is_empty_server_list_visible():
+            return False
+        if self._is_main_menu_ready()[0]:
+            return False
+
+        user_log.info("タイトル画面から復帰を試みます…")
+        detail_log.info("① 以外の状態。⑦ Space → ⑤ → ① を試行します")
+        if not self._proceed_from_title_screen_to_main_menu():
+            detail_log.warning("タイトル画面からの Space 復帰に失敗しました")
+            return False
+        if not self._return_to_server_list_via_main_menu():
+            detail_log.warning("タイトル画面復帰後、サーバー一覧に戻れませんでした")
+            return False
+        return True
 
     def _proceed_from_title_screen_to_main_menu(self) -> bool:
         """⑦ Space キー → ⑤ メインメニュー"""
@@ -1281,7 +1383,10 @@ class LoginAutomator:
         if not self._wait_for_title_screen(self.retry.recovery_timeout):
             detail_log.warning("⑦ タイトル画面を検出できませんでした")
             return False
-        detail_log.info("⑦ タイトル画面を検出しました")
+        if resolve_screen_path("title_screen", self.templates.title_screen):
+            detail_log.info("⑦ タイトル画面を検出しました")
+        else:
+            detail_log.info("⑦ タイトル画面相当の状態。Space を試します")
 
         if not self._proceed_from_title_screen_to_main_menu():
             detail_log.warning("⑤ メインメニューへ遷移できませんでした")
@@ -1381,22 +1486,27 @@ class LoginAutomator:
 
     def _execute_attempt(self) -> str:
         """1試行を実行し、success/retry/stopped を返す。"""
+        self._last_stuck_phase_key = None
         frame = self.vision.capture_screen()
         if self.vision.is_black_frame(frame):
             self._stats.failures += 1
             user_log.warning("ゲーム画面を取得できません（黒画面）。入力せず再試行します")
             detail_log.warning("実行時キャプチャが黒画面または単色です")
+            self._last_stuck_phase_key = "black_frame"
             return "retry"
         if not self._ensure_at_step1():
             self._stats.failures += 1
+            self._last_stuck_phase_key = "step1_not_ready"
             return "retry"
         if not self._step1_join_server_list():
             self._stats.failures += 1
+            self._last_stuck_phase_key = "step1_join_failed"
             return "retry"
         if not self._step2_maybe_join_mods() and self._is_mods_dialog_still_open():
             user_log.warning("MODS 画面が残っているため、次に進めません")
             detail_log.warning("② MODS 画面が残っています。③ には進みません")
             self._stats.failures += 1
+            self._last_stuck_phase_key = "step2_mods_stuck"
             return "retry"
 
         result = self._step3_wait_for_login()
@@ -1409,11 +1519,13 @@ class LoginAutomator:
             if not self._recover_after_connection_failed():
                 self._stats.failures += 1
                 user_log.warning("接続失敗からの復帰に失敗しました")
+                self._last_stuck_phase_key = "recovery_connection_failed"
         elif result == "failure_network":
             user_log.info("ネットワークエラーから復帰します…")
             if not self._recover_after_network_failure():
                 self._stats.failures += 1
                 user_log.warning("ネットワークエラーからの復帰に失敗しました")
+                self._last_stuck_phase_key = "recovery_network_failed"
         else:
             self._stats.failures += 1
             user_log.warning("結果が出なかったため、もう一度試します")
@@ -1423,6 +1535,7 @@ class LoginAutomator:
         self._running = True
         self._stop_event.clear()
         self._stats = LoginStats()
+        self._reset_stuck_tracking()
         ensure_default_assets()
         user_log.info("自動ログインを開始します")
         detail_log.info("自動ログインを開始します")
@@ -1486,6 +1599,8 @@ class LoginAutomator:
                     self._stats.failures += 1
                     user_log.warning("ARK を前面にできません。入力せず再試行します")
                     detail_log.warning("フォーカス取得失敗。安全のためこの試行では入力しません")
+                    self._last_stuck_phase_key = "focus_failed"
+                    self._record_stuck_phase("focus_failed")
                     if not self._sleep(self.retry.delay_seconds):
                         break
                     continue
@@ -1497,10 +1612,12 @@ class LoginAutomator:
                     user_log.warning("ARK ウィンドウを確認できません。入力せず再試行します")
                     detail_log.warning("実行中のウィンドウ喪失: %s", exc)
                     attempt_result = "retry"
+                    self._last_stuck_phase_key = "window_lost"
 
                 if attempt_result == "stopped":
                     return self._stopped_result()
                 if attempt_result == "success":
+                    self._reset_stuck_tracking()
                     self._set_state(LoginState.SUCCESS)
                     user_log.info(
                         "ログインに成功しました！（試行 %d回 / %.0f秒）",
@@ -1513,6 +1630,9 @@ class LoginAutomator:
                         self._stats.elapsed_seconds,
                     )
                     return LoginState.SUCCESS
+
+                if attempt_result == "retry":
+                    self._handle_attempt_retry()
 
                 if not self._sleep(self.retry.delay_seconds):
                     break

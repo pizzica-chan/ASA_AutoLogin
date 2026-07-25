@@ -202,6 +202,62 @@ class EnterDialogRecoveryTests(unittest.TestCase):
         automator = self._automator()
         self.assertFalse(automator._recover_after_connection_failed())
 
+    @patch("src.login_flow.resolve_screen_path", return_value=None)
+    @patch.object(LoginAutomator, "_wait_for_network_failure_dismissed", return_value=True)
+    def test_wait_for_title_screen_without_template_proceeds_after_dismiss(
+        self,
+        mock_dismiss,
+        _resolve,
+    ) -> None:
+        automator = self._automator()
+        self.assertTrue(automator._wait_for_title_screen(1.0))
+        mock_dismiss.assert_called_once_with(1.0)
+
+    @patch("src.login_flow.resolve_screen_path", return_value=None)
+    @patch.object(LoginAutomator, "_return_to_server_list_via_main_menu", return_value=True)
+    @patch.object(LoginAutomator, "_proceed_from_title_screen_to_main_menu", return_value=True)
+    @patch.object(LoginAutomator, "_wait_for_network_failure_dismissed", return_value=True)
+    @patch.object(LoginAutomator, "_wait_after_click")
+    @patch.object(LoginAutomator, "_confirm_dialog_with_enter", return_value=True)
+    @patch.object(LoginAutomator, "_has_network_failure_dialog", return_value=True)
+    @patch.object(LoginAutomator, "_can_detect_network_failure", return_value=True)
+    def test_recover_network_failure_without_title_template_sends_space(
+        self,
+        _can_detect,
+        _has_dialog,
+        _confirm,
+        _after,
+        _dismiss,
+        mock_proceed,
+        _return,
+        _resolve,
+    ) -> None:
+        automator = self._automator()
+        self.assertTrue(automator._recover_after_network_failure())
+        mock_proceed.assert_called_once()
+
+    @patch.object(LoginAutomator, "_return_to_server_list_via_main_menu", return_value=True)
+    @patch.object(LoginAutomator, "_proceed_from_title_screen_to_main_menu", return_value=True)
+    @patch.object(LoginAutomator, "_is_empty_server_list_visible", return_value=False)
+    @patch.object(LoginAutomator, "_is_main_menu_ready", return_value=(False, 0.0, 0.0))
+    @patch.object(LoginAutomator, "_has_network_failure_dialog", return_value=False)
+    @patch.object(LoginAutomator, "_has_connection_failed_dialog", return_value=False)
+    @patch.object(LoginAutomator, "_is_server_list_ready", side_effect=[(False, 0.0), (True, 0.88)])
+    def test_ensure_at_step1_recovers_from_title_screen(
+        self,
+        _ready,
+        _conn,
+        _net,
+        _main,
+        _empty,
+        mock_proceed,
+        _return,
+    ) -> None:
+        automator = self._automator()
+        automator._running = True
+        self.assertTrue(automator._ensure_at_step1())
+        mock_proceed.assert_called_once()
+
     def test_login_flow_never_clicks_obsolete_button_keys(self) -> None:
         import inspect
 

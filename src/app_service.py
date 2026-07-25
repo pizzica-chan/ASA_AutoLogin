@@ -18,6 +18,7 @@ from .button_templates import ButtonConfig
 from .capture import CaptureSettings, DEFAULT_CAPTURE_MODE
 from .default_assets import ensure_default_assets
 from .login_flow import LoginAutomator, LoginState, RetryConfig, TemplateConfig
+from .notifier import parse_mention_user_ids
 from .ui_positions import UiPositions
 from .vision import Vision
 
@@ -326,6 +327,20 @@ def normalize_config(config: dict) -> dict:
     matching = section("matching")
     window = section("window")
     meta = section("meta")
+    notifications = section("notifications")
+    discord = notifications.setdefault("discord", {})
+    if not isinstance(discord, dict):
+        discord = {}
+        notifications["discord"] = discord
+    discord["enabled"] = bool(discord.get("enabled", False))
+    discord["webhook_url"] = str(discord.get("webhook_url") or "").strip()
+    discord["mention_user_ids"] = list(parse_mention_user_ids(discord.get("mention_user_ids")))
+    discord["mention_everyone"] = bool(discord.get("mention_everyone", False))
+    discord["attach_screenshot"] = bool(discord.get("attach_screenshot", False))
+    try:
+        discord["stuck_repeat_threshold"] = max(0, int(discord.get("stuck_repeat_threshold", 0)))
+    except (TypeError, ValueError):
+        discord["stuck_repeat_threshold"] = 0
     ui = section("ui")
     for key in OBSOLETE_UI_KEYS:
         if key in ui:
@@ -347,6 +362,7 @@ def normalize_config(config: dict) -> dict:
     )
     enum_value(matching, "mods_detect_mode", set(VALID_MODS_DETECT_MODES), "hybrid")
     enum_value(matching, "mods_screen_region", set(VALID_MODS_SCREEN_REGIONS), "center")
+    matching["skip_required_mods"] = bool(matching.get("skip_required_mods", False))
 
     try:
         display["monitor_index"] = max(1, int(display.get("monitor_index", 1)))
@@ -513,6 +529,7 @@ def build_automator(
         mods_screen_threshold=float(matching_cfg.get("mods_screen_threshold", 0.55)),
         mods_detect_mode=_normalize_mods_detect_mode(matching_cfg.get("mods_detect_mode", "hybrid")),
         mods_screen_region=_normalize_mods_screen_region(matching_cfg.get("mods_screen_region", "center")),
+        skip_required_mods=bool(matching_cfg.get("skip_required_mods", False)),
         screen_ready_margin=float(matching_cfg.get("screen_ready_margin", 0.05)),
         click_mode=matching_cfg.get("click_mode", "image"),
     )

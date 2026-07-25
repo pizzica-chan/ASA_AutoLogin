@@ -33,6 +33,7 @@ matching:
   mods_screen_threshold: 0.55  # ② MODS 画面の一致度
   mods_detect_mode: hybrid       # hybrid | screen | button（② MODS の検出方法）
   mods_screen_region: center     # center | full（② 画面比較の範囲）
+  skip_required_mods: false      # true なら ② を省略し ① の直後に ③ へ
   screen_ready_margin: 0.05    # ① 復帰判定のゆるさ
   click_mode: image  # image | image_only | coordinates | coordinates_only
 
@@ -67,6 +68,17 @@ ui:
 window:
   title_contains: "ARK: Survival Ascended"
   bring_to_front: true
+
+# Discord 通知（任意）。Webhook URL は Discord のチャンネル設定から取得
+notifications:
+  discord:
+    enabled: false
+    webhook_url: ""
+    mention_user_ids: []  # Discord ユーザー ID（例: ["123456789012345678"]）
+    mention_everyone: false  # true なら @everyone を付与
+    attach_screenshot: false  # true なら通知時にゲーム画面のスクショを添付（黒画面時は省略）
+    stuck_repeat_threshold: 0  # 同じフェーズが n 回連続で進まないとき停滞通知（0=無効）
+    # 終了時通知: 成功・失敗・エラー。手動停止（停止ボタン）では送らない
 
 logging:
   user_file: logs/asa_login_user.log

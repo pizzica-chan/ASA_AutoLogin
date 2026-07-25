@@ -496,6 +496,7 @@
             <li><a href="#flow">自動化の流れ（①〜⑦）</a></li>
             <li><a href="#setup">セットアップ</a></li>
             <li><a href="#gui">GUI の各タブ</a></li>
+            <li><a href="#discord">Discord 通知</a></li>
             <li><a href="#buttons">ボタン画像の差し替え</a></li>
             <li><a href="#logs">ログの見方</a></li>
             <li><a href="#troubleshoot">うまくいかないとき</a></li>
@@ -531,6 +532,7 @@
           <li>サーバー一覧の JOIN →（必要なら）MODS の JOIN → ログイン待ち</li>
           <li>満員などで失敗したときの Enter 確定・BACK / JOIN GAME による復帰と再試行</li>
           <li>タイトル画面での NETWORK FAILURE 処理（Enter → Space → JOIN GAME）</li>
+          <li>（任意）Discord への終了通知・停滞通知</li>
         </ul>
       </div>
 
@@ -745,7 +747,7 @@ python gui.py</pre>
       </div>
 
       <h3>個別モード</h3>
-      <p>必要な画面だけチェックボックスで選んで登録します。② MODS だけ追加したい場合などに使います。</p>
+      <p>必要な画面だけチェックボックスで選んで登録します。② MODS だけ追加したい場合などに使います。初期状態では<strong>すべて未チェック</strong>です（① も含め、必要な項目だけオンにしてください）。</p>
 
       <h3>フルモード</h3>
       <p>すべての画面を順に登録します。解像度や UI レイアウトが大きく異なる環境向けです。</p>
@@ -894,6 +896,7 @@ python gui.py</pre>
         <li><strong>ボタン判定の一致度</strong> … JOIN / BACK などボタン画像の判定（③-A / ⑥ 用 PNG はダイアログ検出）</li>
         <li><strong>② MODS 画面の一致度</strong> … MODS の出現判定（低めの値がデフォルト）</li>
         <li><strong>② MODS 画面の検出</strong> … 検出方式（ハイブリッド推奨）と画面比較範囲（中央モーダル推奨）</li>
+        <li><strong>② REQUIRED MODS をスキップ</strong> … MODS 不要サーバー向け。有効にすると ① の直後に ③ へ進みます</li>
         <li><strong>ARK ウィンドウのタイトル</strong> … 通常は変更不要</li>
         <li><strong>操作前に ARK を前面に出す</strong> … サブモニター運用ではオン推奨</li>
         <li><strong>クリック位置を表示</strong> … 通常操作は短い青、失敗復帰は短い橙のリップルで表示</li>
@@ -938,6 +941,78 @@ python gui.py</pre>
       </ul>
       <p>ログファイルは既定で 5MB × 3 世代にローテーションされます。
       設定保存は原子的に行われ、直前の正常な設定は <code>config.yaml.bak</code> に残ります。</p>
+    </section>
+
+    <section id="discord">
+      <h2>Discord 通知（任意）</h2>
+      <p class="lead">
+        GUI の <strong>「Discord 通知」</strong> タブで、Webhook 経由で Discord チャンネルへメッセージを送れます。
+        離席中にログイン結果や異常を知りたい場合に使います。
+      </p>
+
+      <div class="card success">
+        <strong>Webhook URL の取得</strong><br>
+        Discord の対象チャンネル → チャンネル設定 → <strong>連携サービス</strong> → <strong>Webhook</strong> → 新規 Webhook を作成 → URL をコピー
+      </div>
+
+      <h3>通知が送られるタイミング</h3>
+      <table>
+        <thead>
+          <tr><th>タイミング</th><th>通知</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>ログイン成功</td><td>送る</td></tr>
+          <tr><td>ログイン失敗（リトライ上限など）</td><td>送る</td></tr>
+          <tr><td>エラー終了（ウィンドウ喪失など）</td><td>送る</td></tr>
+          <tr><td><strong>停止ボタンで停止</strong></td><td><strong>送らない</strong></td></tr>
+          <tr><td>開始カウントダウン中に停止</td><td>送らない</td></tr>
+          <tr><td>同じフェーズが n 回連続で進まない（停滞通知）</td><td>送る（下記「停滞通知」参照）</td></tr>
+        </tbody>
+      </table>
+
+      <h3>各設定項目</h3>
+      <table>
+        <thead>
+          <tr><th>項目</th><th>説明</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Discord 通知を有効にする</td><td>Webhook URL が設定されているときのみ有効</td></tr>
+          <tr><td>Webhook URL</td><td><code>https://discord.com/api/webhooks/...</code> 形式（旧 <code>discordapp.com</code> も可）。他人に見せないでください</td></tr>
+          <tr><td>メンション（ユーザー ID）</td><td>カンマ区切り。開発者モードでユーザー ID をコピー</td></tr>
+          <tr><td>@everyone</td><td>通知本文の先頭に <code>@everyone</code> を付与</td></tr>
+          <tr><td>スクショ添付</td><td>通知時にゲーム画面（キャプチャ領域）の PNG を添付。黒画面・取得失敗時はテキストのみ</td></tr>
+          <tr><td>停滞通知（n 回）</td><td>同じ問題が n 回連続したとき追加通知。<code>0</code> で無効</td></tr>
+          <tr><td>テスト送信</td><td>現在のフォーム設定で試し送り（保存前の内容も反映）</td></tr>
+        </tbody>
+      </table>
+
+      <h3>停滞通知の例</h3>
+      <p><code>stuck_repeat_threshold</code> を <code>5</code> にすると、次のような状態が 5 回連続したときに通知します（1 回の停滞エピソードにつき 1 通知）。</p>
+      <ul>
+        <li>① サーバー一覧に戻れない</li>
+        <li>⑥ からの復帰に失敗し続ける</li>
+        <li>ARK を前面にできない / ウィンドウを確認できない</li>
+      </ul>
+      <p class="matrix-note">Server full 等で ③-A / ⑥ から<strong>正常に復帰できた試行</strong>は停滞カウントに含めません。停止ボタンを押したあとの停滞検出も通知しません。</p>
+
+      <div class="card warn">
+        <strong>セキュリティ</strong>
+        <ul>
+          <li>Webhook URL は <code>config.yaml</code> に平文保存されます</li>
+          <li>詳細ログに設定を出力するとき、Webhook URL は <code>***</code> にマスクされます</li>
+          <li>診断情報コピーには Webhook URL は含まれません</li>
+        </ul>
+      </div>
+
+      <h3>config.yaml での設定例</h3>
+      <pre class="flow">notifications:
+  discord:
+    enabled: true
+    webhook_url: "https://discord.com/api/webhooks/..."
+    mention_user_ids: ["123456789012345678"]
+    mention_everyone: false
+    attach_screenshot: true
+    stuck_repeat_threshold: 5</pre>
     </section>
 
     <section id="buttons">
@@ -1014,6 +1089,9 @@ python gui.py</pre>
           <tr><td><code>join_mods ボタン最高</code></td><td>② MODS のボタン検出類似度（ハイブリッド / ボタンのみ時）</td></tr>
           <tr><td><code>mods_detect_mode</code></td><td>② の検出方式（hybrid / screen / button）</td></tr>
           <tr><td><code>capture_region</code></td><td>実際にキャプチャしている領域（ウィンドウ基準か確認）</td></tr>
+          <tr><td><code>Discord 通知を送信しました</code></td><td>Webhook 送信成功（スクショ添付時は括弧付き）</td></tr>
+          <tr><td><code>Discord 通知をスキップしました（手動停止）</code></td><td>停止ボタンによる終了のため終了通知を省略</td></tr>
+          <tr><td><code>停滞通知</code></td><td>同じフェーズがしきい値に達し Discord へ通知</td></tr>
         </tbody>
       </table>
     </section>
@@ -1302,7 +1380,11 @@ python gui.py</pre>
           </thead>
           <tbody>
             <tr>
-              <td>② をスキップ</td>
+              <td>MODS 不要なサーバー</td>
+              <td>画像認識タブ → <strong>② REQUIRED MODS をスキップ</strong> をオン（① の直後に ③ ログイン待機へ）</td>
+            </tr>
+            <tr>
+              <td>② をスキップ（MODS が出ているのに）</td>
               <td>「② MODS 画面の検出」→ 方式<strong>ハイブリッド</strong>・範囲<strong>中央モーダル</strong> → ② JOIN 座標登録 → セットアップ②で <code>required_mods.png</code> 登録 → MODS 一致度を下げる（0.48〜0.52）</td>
             </tr>
             <tr>
@@ -1446,6 +1528,11 @@ python gui.py</pre>
             <td>② MODS 画面の一致度</td>
             <td>0.55</td>
             <td>見逃し → 0.48〜0.52 / 早押し → 0.58〜0.65</td>
+          </tr>
+          <tr>
+            <td>② REQUIRED MODS をスキップ</td>
+            <td>オフ</td>
+            <td>MODS 不要サーバー → オン（① の直後に ③ へ）</td>
           </tr>
         </tbody>
       </table>

@@ -104,6 +104,11 @@ def main() -> None:
   templates/buttons/ 内の PNG を同じファイル名のまま上書きしてください。
   例: join_server_list.png, join_mods.png, cancel_failed.png など
 
+【Discord 通知（任意）】
+  GUI「Discord 通知」タブで Webhook を設定
+  成功・失敗・エラー終了時に通知（停止ボタンでは通知しない）
+  詳細は 取扱説明書.html の「Discord 通知」を参照
+
 【注意】
   Python のインストールは不要です。
   Windows 10/11 64bit 向けです。

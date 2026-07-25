@@ -58,6 +58,21 @@ class Step2ModsTests(unittest.TestCase):
         self.assertTrue(when_ready.call_args.kwargs.get("skip_wait"))
         mock_click.assert_called_once()
 
+    @patch.object(LoginAutomator, "_wait_for_mods_dialog_stable")
+    @patch.object(LoginAutomator, "_click_target_when_ready")
+    def test_step2_skips_when_option_enabled(
+        self,
+        mock_click_when_ready,
+        mock_stable,
+    ) -> None:
+        automator = self._automator()
+        automator.templates.skip_required_mods = True
+        automator._running = True
+
+        self.assertTrue(automator._step2_maybe_join_mods())
+        mock_stable.assert_not_called()
+        mock_click_when_ready.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
